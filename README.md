@@ -1,0 +1,56 @@
+# Etch Text Editor
+
+A WordPress plugin that adds a graphical text-editing popup to the [Etch](https://etchwp.com) builder — for both **Etch text elements** and **Gutenberg text** that lives in Etch as passthrough blocks.
+
+> Built on top of Etch's experimental Public API (`window.etch`). Etch marks this API as **experimental (0.x)**; breaking changes can occur between Etch releases.
+
+## Why
+
+Out of the box, Etch fully round-trips its own elements to Gutenberg, but text created in Gutenberg only passes *through* to the front end and can't be edited inside Etch. This plugin closes that gap and adds rich inline formatting on top.
+
+## Features
+
+- **Unified popup editor** for:
+  - Etch text elements (`p`, `h1`–`h6`, `li`, `blockquote`, `figcaption`)
+  - Single Gutenberg passthrough blocks (`core/paragraph`, `core/heading`, `core/preformatted`, `core/verse`)
+  - Text blocks nested inside Gutenberg **containers** (`core/group`, `core/columns`, `core/column`, …)
+- **Canvas preview**: Gutenberg passthrough placeholders show their real text (with a `GB` badge) instead of an empty `core/*` placeholder.
+- **Live preview**: formatting applied in the popup is mirrored into the canvas immediately (visual only; persisted on close).
+- **Inline formatting toolbar**: bold (`strong`), italic (`em`), superscript, subscript, font-weight, text color, link, clear formatting.
+- **Color via theme tokens**: pick ACSS / CSS custom-property color tokens (grouped by family) and apply them as `color: var(--token)`.
+- **Link search**: type to search internal pages, posts and media (WordPress REST API) instead of pasting a URL.
+- **Auto-save**: saving happens on click-outside or `Cmd/Ctrl+Enter`; `Esc`/Close discards.
+- **Sync-safe**: Gutenberg blocks stay core blocks, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
+
+## How it works
+
+The plugin loads a script into the Etch builder (for logged-in users who can `edit_posts`). It reads block JSON via the public API, renders the editing UI in its own DOM (decoupled from Etch's canvas React tree for robustness), and writes changes back through the public API. Gutenberg passthrough content is edited by rewriting the wrapped block's `innerHTML`/`innerContent`; container blocks are edited by patching only the affected nested block and re-writing the whole passthrough.
+
+## Installation
+
+1. Download the latest release ZIP (or clone this repo and zip the `etch-text-editor` folder).
+2. WordPress admin → Plugins → Add New → Upload Plugin → choose the ZIP.
+3. Activate.
+4. Open a page in the Etch builder. Select a text block (or click a `GB` preview) and use the **✎ Edit** button.
+
+Requirements: WordPress 6.0+, PHP 7.4+, Etch 1.6.x with the Public API enabled.
+
+If you use a page cache (e.g. LiteSpeed), purge it after updating so the builder loads the new script.
+
+## Usage
+
+- Select a text block in the builder → click **✎ Edit** (appears near the text), or click a `GB` canvas preview.
+- Format via the toolbar. For color, use the native picker or the **var** button to choose a theme token.
+- For links, type a URL or a search term to pick an internal page/post/media item.
+- Click outside the popup (or `Cmd/Ctrl+Enter`) to save; `Esc`/Close to discard.
+
+## Known limitations
+
+- The Public API is experimental (0.x) — Etch updates may require changes here.
+- Double-clicking a paragraph that contains an inline link can crash Etch 1.6.3's own inline editor (`Cannot read properties of undefined (reading 'count')`). This is an Etch bug; the plugin works around it by intercepting the double-click and opening its own editor instead.
+- Nested container text is edited in the popup (there is no per-paragraph canvas node inside a container).
+- The canvas live-preview writes into Etch's rendered DOM; it is visual only and reconciled on save.
+
+## License
+
+GPL-2.0-or-later. See [LICENSE](LICENSE).
