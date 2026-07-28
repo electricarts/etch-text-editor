@@ -2,6 +2,30 @@
 
 All notable changes to this project.
 
+## 0.19.5
+- Reverted the font-weight icon to real font letters (thin/bold "A", equal size) for the cleanest look.
+
+## 0.19.4
+- Font-weight icon experiment as a self-contained SVG (reverted in 0.19.5).
+
+## 0.19.3
+- The edit button now toggles: a second click closes the popup (saving if changed).
+
+## 0.19.2
+- Font-weight icon changed to two "A"s (thin/bold, max weight contrast).
+
+## 0.19.1
+- Translated all code comments and log messages to English.
+
+## 0.19.0
+- Replaced the "Wt" font-weight dropdown with a line-weight icon button and a labeled weight list (each option previewed in its actual weight).
+
+## 0.18.1
+- Literal `<br>` / `<br/>` in the text is now converted to a real line break on save instead of being escaped to `&lt;br&gt;`.
+
+## 0.18.0
+- Combine multiple inline styles on the same selection into a single `<span>` (e.g. `font-weight` + `color`) instead of nested spans.
+
 ## 0.17.0
 - Renamed plugin, folder, main file and script handle to `etch-text-editor`.
 

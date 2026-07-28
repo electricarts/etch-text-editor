@@ -1,25 +1,25 @@
 /**
- * Etch Text Editor v0.17.0
+ * Etch Text Editor v0.19.5
  * ------------------------------------
- * Inline-Bearbeitung von Text direkt im Etch-Canvas:
- *  - Gutenberg-Passthrough-Blöcke (core/paragraph, core/heading, …):
- *    Vorschau im Canvas anklicken → direkt editieren. Speichern via
- *    replace() → Block bleibt Core-Block, 2-Wege-Sync bleibt erhalten.
- *  - Etch-Textelemente (p, h1–h6, li, …): Auswahl im Builder → schwebender
- *    „✎ Bearbeiten"-Button direkt am Text → inline editieren.
- *  - Schwebende Toolbar: B (strong), I (em), font-weight, Link,
- *    Format entfernen, Speichern (Cmd/Ctrl+Enter), Abbrechen (Esc).
- *  - Popup-Editor als Fallback (wenn der Canvas-Knoten nicht eindeutig
- *    gefunden wird).
+ * Graphical text-editing popup for the Etch builder:
+ *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
+ *    click the canvas preview to edit. Saved via replace() → the block
+ *    stays a core block, so Etch <-> Gutenberg two-way sync is preserved.
+ *  - Etch text elements (p, h1–h6, li, …): select in the builder → the
+ *    "✎ Edit" button appears next to the text → opens the popup.
+ *  - Text nested in Gutenberg containers (core/group, core/columns, …):
+ *    edited through the popup as well.
+ *  - Popup toolbar: bold (strong), italic (em), superscript, subscript,
+ *    font-weight, text color (incl. theme tokens), link (with internal
+ *    search), clear formatting. Auto-save on click-outside / Cmd+Enter.
  *
- * v0.5.0: Toolbar-Aktionen auf mousedown (robust gegen Etch-Canvas-Handler),
- * Edit-Button erscheint am Text statt unten rechts, Cleanup-Fixes,
- * Schutz gegen doppelt geladene Instanzen.
+ * All editing runs through the popup (decoupled from Etch's canvas React
+ * tree). Writes go through the Etch Public API (replace + saveAsync).
  */
 (() => {
 	"use strict";
 
-	const VERSION = "0.17.0";
+	const VERSION = "0.19.5";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -69,7 +69,7 @@
 			});
 		try {
 			walk(etch.blocks.getTree());
-		} catch (_) { /* Builder in Übergangszustand */ }
+		} catch (_) { /* builder in a transitional state */ }
 		return out;
 	}
 
@@ -89,9 +89,9 @@
 	}
 
 	/**
-	 * Verschachtelte, bearbeitbare Textblöcke innerhalb eines Container-Blocks
-	 * (core/group, core/columns, core/column, …) sammeln.
-	 * Liefert Objekte mit `path` (Index-Kette in innerBlocks), blockName und innerHTML.
+	 * Collect editable text blocks nested inside a container block
+	 * (core/group, core/columns, core/column, …).
+	 * Returns objects with `path` (index chain in innerBlocks), blockName and innerHTML.
 	 */
 	function collectNestedEditable(gb, path) {
 		path = path || [];
@@ -107,7 +107,7 @@
 		return out;
 	}
 
-	/** Passthrough-Container mit mindestens einem verschachtelten Textblock? */
+	/** Passthrough container with at least one nested text block? */
 	function isContainerPassthrough(block) {
 		if (!block || block.type !== "etch/passthrough" || !block.gutenbergBlock) return false;
 		const gb = block.gutenbergBlock;
@@ -115,7 +115,7 @@
 		return collectNestedEditable(gb).length > 0;
 	}
 
-	/** Innersten Gutenberg-Block über eine Index-Kette (path) holen */
+	/** Get the innermost Gutenberg block via an index chain (path) */
 	function nestedBlockAt(gb, path) {
 		let node = gb;
 		for (const idx of path) {
@@ -138,8 +138,8 @@
 				const tag = (c.tag || "span").toLowerCase();
 				if (!INLINE_TAGS.includes(tag)) return null;
 				const attrs = { ...(c.attributes || {}) };
-				/* Etch-interne Laufzeit-Klassen herausfiltern; styles (Style-IDs)
-				   bewusst NICHT als Klassen serialisieren */
+				/* Filter out Etch-internal runtime classes; deliberately do NOT
+				   serialize styles (style IDs) as classes */
 				if (attrs.class != null) {
 					const cls = String(attrs.class).split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) attrs.class = cls.join(" ");
@@ -164,10 +164,10 @@
 	}
 
 	/**
-	 * Vorlagen für neue Knoten: version/context/options von nativ erstellten
-	 * Blöcken aus dem Dokument klonen. Minimal-Shapes (version:1, context:{})
-	 * akzeptiert die API zwar, aber Etchs Renderer erwartet bei nativen
-	 * Blöcken zusätzliche interne Felder → "Error rendering block".
+	 * Templates for new nodes: clone version/context/options from natively
+	 * created blocks in the document. Minimal shapes (version:1, context:{})
+	 * are accepted by the API, but Etch's renderer expects additional
+	 * internal fields on native blocks → "Error rendering block".
 	 */
 	function findTemplates(etch) {
 		let textTpl = null;
@@ -180,7 +180,7 @@
 			});
 		try {
 			walk(etch.blocks.getTree());
-		} catch (_) { /* Übergangszustand */ }
+		} catch (_) { /* transitional state */ }
 		return { textTpl, elTpl };
 	}
 
@@ -190,7 +190,7 @@
 			version: tpl.version ?? 1,
 			context: JSON.parse(JSON.stringify(tpl.context || {})),
 		};
-		delete base.context.name; // Label des Vorlagen-Blocks nicht übernehmen
+		delete base.context.name; // don't carry over the template block's label
 		delete base.context.structureState;
 		if (tpl.options) base.options = JSON.parse(JSON.stringify(tpl.options));
 		return base;
@@ -219,8 +219,8 @@
 			const attributes = {};
 			for (const a of node.attributes) {
 				if (a.name === "class") {
-					/* Etch-interne Laufzeit-Klassen (etch-html-block etc.) NIEMALS
-					   persistieren – sie erzeugen kaputte Style-Referenzen */
+					/* NEVER persist Etch-internal runtime classes (etch-html-block etc.)
+					   – they create broken style references */
 					const cls = a.value.split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) attributes.class = cls.join(" ");
 				} else {
@@ -278,6 +278,34 @@
 	/* Sanitizer                                                           */
 	/* ================================================================== */
 
+	/** Merge nested plain <span> wrappers into ONE span with combined
+	    style properties (e.g. font-weight + color).
+	    Only spans without a class that contain exactly one span as their sole content. */
+	function coalesceSpans(rootEl) {
+		let changed = true;
+		while (changed) {
+			changed = false;
+			rootEl.querySelectorAll("span").forEach((s) => {
+				if (s.className) return;
+				const kids = Array.from(s.childNodes).filter(
+					(n) => !(n.nodeType === 3 && !n.nodeValue.trim())
+				);
+				if (kids.length === 1 && kids[0].nodeType === 1 &&
+					kids[0].tagName === "SPAN" && !kids[0].className) {
+					const child = kids[0];
+					const cs = child.style;
+					for (let i = 0; i < cs.length; i++) {
+						const p = cs[i];
+						s.style.setProperty(p, cs.getPropertyValue(p));
+					}
+					while (child.firstChild) s.insertBefore(child.firstChild, child);
+					child.remove();
+					changed = true;
+				}
+			});
+		}
+	}
+
 	/** Leere Inline-Elemente rekursiv auspacken (z. B. <strong></strong>-Reste) */
 	function stripEmptyInline(rootEl) {
 		let changed = true;
@@ -292,7 +320,32 @@
 		}
 	}
 
+	/** Convert literal "<br>" / "<br/>" / "<br />" in text nodes into real
+	    <br> elements (typed or escaped line breaks). */
+	function convertLiteralBr(rootEl) {
+		const doc = rootEl.ownerDocument;
+		const re = /<br\s*\/?>/gi;
+		const texts = [];
+		const walker = doc.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) texts.push(walker.currentNode);
+		texts.forEach((tn) => {
+			const s = tn.nodeValue;
+			if (!/<br\s*\/?>/i.test(s)) return;
+			const frag = doc.createDocumentFragment();
+			let last = 0, m;
+			re.lastIndex = 0;
+			while ((m = re.exec(s))) {
+				if (m.index > last) frag.appendChild(doc.createTextNode(s.slice(last, m.index)));
+				frag.appendChild(doc.createElement("br"));
+				last = m.index + m[0].length;
+			}
+			if (last < s.length) frag.appendChild(doc.createTextNode(s.slice(last)));
+			tn.parentNode.replaceChild(frag, tn);
+		});
+	}
+
 	function sanitizeEditorHtml(rootEl) {
+		convertLiteralBr(rootEl); // typed/escaped <br> into real line breaks
 		const doc = rootEl.ownerDocument;
 		["b", "i"].forEach((tag) => {
 			rootEl.querySelectorAll(tag).forEach((el) => {
@@ -317,7 +370,7 @@
 						n === "class";
 					if (!keep || n.startsWith("on")) child.removeAttribute(attr.name);
 				});
-				/* Etch-interne Laufzeit-Klassen entfernen (etch-html-block etc.) */
+				/* Remove Etch-internal runtime classes (etch-html-block etc.) */
 				if (child.hasAttribute("class")) {
 					const cls = child.getAttribute("class").split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) child.setAttribute("class", cls.join(" "));
@@ -344,7 +397,8 @@
 			});
 		};
 		walk(rootEl);
-		stripEmptyInline(rootEl); // leere Reste (z. B. nach removeFormat) entfernen
+		coalesceSpans(rootEl);   // merge nested spans into one
+		stripEmptyInline(rootEl); // remove empty leftovers (e.g. after removeFormat)
 		return rootEl.innerHTML;
 	}
 
@@ -353,7 +407,7 @@
 	/* ================================================================== */
 
 	function restRoot() {
-		/* wpApiSettings.root ist im Builder meist vorhanden; sonst Standardpfad */
+		/* wpApiSettings.root is usually present in the builder; otherwise a default path */
 		try {
 			if (window.wpApiSettings && window.wpApiSettings.root) return window.wpApiSettings.root;
 		} catch (_) { /* ignore */ }
@@ -368,7 +422,7 @@
 		return headers;
 	}
 
-	/** Seiten & Beiträge über die Such-API */
+	/** Pages & posts via the search API */
 	async function searchContent(query) {
 		const root = restRoot().replace(/\/$/, "/");
 		const url = root + "wp/v2/search?" + new URLSearchParams({
@@ -388,7 +442,7 @@
 		}));
 	}
 
-	/** Medien/Dateien über den Media-Endpoint */
+	/** Media/files via the media endpoint */
 	async function searchMedia(query) {
 		const root = restRoot().replace(/\/$/, "/");
 		const url = root + "wp/v2/media?" + new URLSearchParams({
@@ -409,11 +463,11 @@
 		});
 	}
 
-	/** Beide Quellen parallel; einzelne Fehler nicht fatal */
+	/** Both sources in parallel; individual errors are non-fatal */
 	async function searchInternal(query) {
 		const [content, media] = await Promise.all([
-			searchContent(query).catch((e) => { log("Content-Suche:", String(e)); return []; }),
-			searchMedia(query).catch((e) => { log("Media-Suche:", String(e)); return []; }),
+			searchContent(query).catch((e) => { log("Content search:", String(e)); return []; }),
+			searchMedia(query).catch((e) => { log("Media search:", String(e)); return []; }),
 		]);
 		return [...content, ...media].filter((r) => r.url).slice(0, 10);
 	}
@@ -451,7 +505,7 @@
 		return vars;
 	}
 
-	/** Nur echte Farb-Tokens, ohne Etch-/Builder-interne Variablen. */
+	/** Only real color tokens, excluding Etch/builder-internal variables. */
 	function colorTokenNames(vars) {
 		const EXCLUDE = /^--(e-|etch|lightningcss|stripe|wp-|admin-)/i;
 		const isColor = (v) => /#|rgb|hsl|oklch|oklab|color-mix/i.test(v) || /^var\(/i.test(v);
@@ -460,20 +514,20 @@
 			.sort();
 	}
 
-	/* Bevorzugte Reihenfolge der ACSS-Farbfamilien */
+	/* Preferred order of the ACSS color families */
 	const TOKEN_FAMILY_ORDER = [
 		"primary", "secondary", "tertiary", "accent", "base", "shade", "neutral",
 		"action", "success", "danger", "error", "warning", "info",
 		"white", "black", "pure-white", "pure-black", "text", "heading", "link",
 	];
-	/* Abstufungen (heller → dunkler); Grundton (kein Suffix) zuerst */
+	/* Shades (lighter → darker); base tone (no suffix) first */
 	const TOKEN_MOD = /-(trans-\d+|ultra-light|semi-light|light|hover|semi-dark|ultra-dark|dark)$/;
 	const TOKEN_MOD_RANK = {
 		"": 0, "ultra-light": 1, "light": 2, "semi-light": 3, "hover": 4,
 		"semi-dark": 5, "dark": 6, "ultra-dark": 7,
 	};
 
-	/** Tokens nach Familie gruppieren und sinnvoll ordnen. */
+	/** Group tokens by family and order them sensibly. */
 	function groupColorTokens(names) {
 		const groups = {};
 		names.forEach((n) => {
@@ -533,14 +587,14 @@
 		injectTopStyles();
 
 		/* ---------------------------------------------------------------- */
-		/* Persistenz                                                        */
+		/* Persistence                                                       */
 		/* ---------------------------------------------------------------- */
 
 		async function persistGb(blockId, htmlContent) {
 			const fresh = etch.blocks.getJson(blockId);
 			const gb = fresh.gutenbergBlock;
 			const outer = parseOuter(gb.innerHTML);
-			if (!outer) throw new Error("innerHTML nicht parsebar");
+			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
 			sanitizeEditorHtml(clone);
@@ -559,23 +613,23 @@
 			return newId;
 		}
 
-		/** Verschachtelten Textblock in einem Container-Passthrough speichern.
-		    Nur der betroffene innere Block wird geändert; die Container-Hülle
-		    (innerContent mit den null-Platzhaltern) bleibt unangetastet. */
+		/** Save a nested text block inside a container passthrough.
+		    Only the affected inner block is changed; the container wrapper
+		    (innerContent with the null placeholders) is left untouched. */
 		async function persistGbNested(passthroughId, path, htmlContent) {
 			const fresh = etch.blocks.getJson(passthroughId);
-			const gb = JSON.parse(JSON.stringify(fresh.gutenbergBlock)); // tiefe Kopie
+			const gb = JSON.parse(JSON.stringify(fresh.gutenbergBlock)); // deep copy
 			const target = nestedBlockAt(gb, path);
 			if (!target) throw new Error("Nested block not found.");
 
 			const outer = parseOuter(target.innerHTML);
-			if (!outer) throw new Error("innerHTML nicht parsebar");
+			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
 			sanitizeEditorHtml(clone);
 			const newOuterHtml = clone.outerHTML;
 
-			/* Whitespace um das Tag herum (z. B. "\n<p>…</p>\n") erhalten */
+			/* Preserve whitespace around the tag (e.g. "\n<p>…</p>\n") */
 			const newInnerHTML = target.innerHTML.includes(outer.outerHTML)
 				? target.innerHTML.replace(outer.outerHTML, newOuterHtml)
 				: newOuterHtml;
@@ -612,7 +666,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Canvas-Styles (pro iframe-Dokument)                               */
+		/* Canvas styles (per iframe document)                               */
 		/* ---------------------------------------------------------------- */
 
 		const CANVAS_CSS = `
@@ -711,8 +765,8 @@
 			setTimeout(() => t.remove(), isError ? 4000 : 2000);
 		}
 
-		/** Aktion auf mousedown ausführen – Klick-Phase wird neutralisiert,
-		 *  damit Etchs Canvas-Handler und Fokuswechsel nicht dazwischenfunken. */
+		/** Run the action on mousedown – the click phase is neutralized
+		 *  so Etch's canvas handlers and focus changes don't interfere. */
 		function onTap(btn, fn) {
 			btn.addEventListener("mousedown", (e) => {
 				e.preventDefault();
@@ -730,8 +784,8 @@
 		/* ---------------------------------------------------------------- */
 
 		let session = null;
-		let activeMirrorEl = null; // Canvas-Knoten, der gerade live vom Popup gespiegelt wird
-		let lastSelected = false; // Sentinel: erzwingt Re-Evaluation im Poll
+		let activeMirrorEl = null; // canvas node currently mirrored live by the popup
+		let lastSelected = false; // sentinel: forces re-evaluation in the poll
 
 		function buildToolbar(doc) {
 			ensureCanvasStyles(doc);
@@ -770,7 +824,7 @@
 			if (!el.isConnected) return;
 			const r = el.getBoundingClientRect();
 			const tbH = toolbar.offsetHeight || 40;
-			/* bevorzugt UNTER dem Element – über dem Element sitzt Etchs eigenes Auswahl-Label */
+			/* prefer BELOW the element – Etch's own selection label sits above it */
 			let top = r.bottom + 10;
 			if (top + tbH > (win.innerHeight || 600) - 8) top = Math.max(4, r.top - tbH - 10);
 			toolbar.style.top = top + "px";
@@ -797,7 +851,7 @@
 		async function saveSession() {
 			if (!session || session.saving) return;
 			const s = session;
-			s.saving = true; // Doppel-Save verhindern (Klick außen + Auto-Save)
+			s.saving = true; // prevent double save (outside click + auto-save)
 			try {
 				if (!s.el.isConnected) throw new Error("The element was re-rendered by the builder – please reopen it.");
 				const blockId = s.resolveBlockId();
@@ -817,9 +871,9 @@
 		}
 
 		/**
-		 * Bearbeitung sofort ins Etch-Modell committen (→ HTML-Feld aktualisiert
-		 * sich sofort) und die Inline-Bearbeitung nahtlos wieder öffnen.
-		 * Für diskrete Aktionen wie Unlink/Clear gedacht (nicht beim Tippen).
+		 * Commit the edit into the Etch model immediately (→ the HTML panel
+		 * updates at once) and reopen the inline editing seamlessly.
+		 * Intended for discrete actions like Unlink/Clear (not while typing).
 		 */
 		async function commitLive() {
 			if (!session || session.saving) return;
@@ -835,11 +889,11 @@
 					? await persistGb(blockId, html)
 					: await persistEtch(blockId, html);
 
-				endSession(false); // aktuelle (jetzt veraltete) Session beenden
+				endSession(false); // end the current (now stale) session
 
-				/* Nach dem Re-Render den neuen Knoten finden und Bearbeitung
-				   wieder aufnehmen – mehrere Versuche, da das Canvas asynchron
-				   neu rendert. */
+				/* After the re-render, find the new node and resume
+				   editing – several attempts, since the canvas re-renders
+				   asynchronously. */
 				const reopen = (tries) => {
 					let node = null;
 					try {
@@ -847,7 +901,7 @@
 						node = mode === "etch"
 							? findCanvasNodeForEtch(fresh)
 							: findPreviewNodeForGb(fresh);
-					} catch (_) { /* noch nicht bereit */ }
+					} catch (_) { /* not ready yet */ }
 					if (node) {
 						if (mode === "gb") startGbSessionFromPreview(node);
 						else startSession("etch", node, () => newId);
@@ -857,7 +911,7 @@
 				};
 				setTimeout(() => reopen(12), 150);
 			} catch (e) {
-				err("Live-Commit fehlgeschlagen:", apiErrInfo(e));
+				err("Live commit failed:", apiErrInfo(e));
 				if (session) session.saving = false;
 			}
 		}
@@ -873,9 +927,9 @@
 			const toolbar = buildToolbar(doc);
 			const cleanup = [];
 
-			stripEmptyInline(el); // unsichtbare leere Inline-Reste vor dem Editieren entfernen
+			stripEmptyInline(el); // remove invisible empty inline leftovers before editing
 
-			/* Bereits vor dem Öffnen im Canvas gesetzte Textmarkierung übernehmen */
+			/* Adopt a text selection already made in the canvas before opening */
 			let preRange = null;
 			try {
 				const preSel = win.getSelection();
@@ -897,7 +951,7 @@
 			el.setAttribute("data-eppe-editing", "1");
 			el.focus();
 
-			/* Markierung nach dem Fokussieren wiederherstellen (focus collabiert sie sonst) */
+			/* Restore the selection after focusing (focus collapses it otherwise) */
 			if (preRange) {
 				try {
 					const sel = win.getSelection();
@@ -906,14 +960,14 @@
 				} catch (_) { /* ignore */ }
 			}
 
-			/* Etchs Canvas-Handler vom editierten Element fernhalten */
+			/* Keep Etch's canvas handlers away from the edited element */
 			const stop = (e) => e.stopPropagation();
 			["mousedown", "mouseup", "click", "dblclick", "keydown", "keypress", "keyup", "input", "paste"].forEach((t) => {
 				el.addEventListener(t, stop, true);
 				cleanup.push(() => el.removeEventListener(t, stop, true));
 			});
 
-			/* Toolbar-Events nicht zu Etch durchsickern lassen (Bubble-Phase) */
+			/* Don't let toolbar events leak to Etch (bubble phase) */
 			["mousedown", "mouseup", "click", "dblclick", "keydown", "keyup", "input", "paste"].forEach((t) => {
 				toolbar.addEventListener(t, stop, false);
 			});
@@ -930,9 +984,9 @@
 			el.addEventListener("keydown", onKey, true);
 			cleanup.push(() => el.removeEventListener("keydown", onKey, true));
 
-			/* Klick außerhalb des bearbeiteten Absatzes: Session automatisch
-			   speichern (bei Änderungen) und ggf. direkt in den angeklickten
-			   Textabsatz wechseln – wie in einem normalen Editor. */
+			/* Click outside the edited paragraph: automatically save the
+			   session (if changed) and, if applicable, switch directly into
+			   the clicked text paragraph – like in a normal editor. */
 			const onDocDown = (e) => {
 				try {
 					if (!session || session.el !== el) return;
@@ -956,7 +1010,7 @@
 						endSession(false);
 						maybeSwitch();
 					}
-				} catch (_) { /* nie Etch stören */ }
+				} catch (_) { /* never disturb Etch */ }
 			};
 			doc.addEventListener("mousedown", onDocDown, true);
 			cleanup.push(() => doc.removeEventListener("mousedown", onDocDown, true));
@@ -1011,11 +1065,11 @@
 					el.focus();
 					restoreRange();
 					if (btn.dataset.cmd === "unlink") {
-						/* execCommand("unlink") wirkt nur bei echter Markierung –
-						   direkte DOM-Manipulation ist sofort sichtbar */
+						/* execCommand("unlink") only works with a real selection –
+						   direct DOM manipulation is immediately visible */
 						unwrapInScope("a");
 						onSelChange();
-						commitLive(); // sofort ins Etch-Modell/HTML-Feld übernehmen
+						commitLive(); // apply to the Etch model / HTML panel immediately
 						return;
 					}
 					doc.execCommand(btn.dataset.cmd, false, null);
@@ -1023,8 +1077,8 @@
 				});
 			});
 
-			/* Markierten Bereich in einen span mit Style-Eigenschaft hüllen
-			   (font-weight, color, …) – sofort sichtbar */
+			/* Wrap the selected range in a span with a style property
+			   (font-weight, color, …) – immediately visible */
 			const applySpanStyle = (prop, value) => {
 				if (!session.savedRange || session.savedRange.collapsed) {
 					toast(doc, "Please select some text first.", true);
@@ -1119,14 +1173,14 @@
 			const doSearch = (q) => {
 				clearTimeout(searchTimer);
 				if (/^https?:\/\//i.test(q) || q.startsWith("/") || q.startsWith("#") || q.startsWith("mailto:")) {
-					renderResults(null); return; // sieht nach echter URL aus → nicht suchen
+					renderResults(null); return; // looks like a real URL → don't search
 				}
 				if (q.length < 2) { renderResults(null); return; }
 				searchTimer = setTimeout(async () => {
 					try {
 						renderResults(await searchInternal(q));
 					} catch (e) {
-						log("Interne Suche fehlgeschlagen:", String(e));
+						log("Internal search failed:", String(e));
 						renderResults(null);
 					}
 				}, 250);
@@ -1166,13 +1220,13 @@
 				/* Alle Inline-Formatierungen sofort sichtbar auspacken */
 				unwrapInScope("span,strong,em,a,u,s,mark,code,sub,sup");
 				onSelChange();
-				commitLive(); // sofort ins Etch-Modell/HTML-Feld übernehmen
+				commitLive(); // apply to the Etch model / HTML panel immediately
 			});
 
 			onTap(toolbar.querySelector(".eppe-tb-cancel"), () => endSession(true));
 
-			/* Klick ins Builder-UI (Top-Fenster) während der Bearbeitung:
-			   ebenfalls automatisch speichern bzw. schließen */
+			/* Click into the builder UI (top window) while editing:
+			   also auto-save or close */
 			const onTopDown = () => {
 				if (!session || session.el !== el || session.saving) return;
 				const changed = el.innerHTML !== session.originalHtml;
@@ -1187,7 +1241,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Edit-Button direkt am Text                                        */
+		/* Edit button right next to the text                                */
 		/* ---------------------------------------------------------------- */
 
 		let editBtn = null; // { btn, doc, node, target }
@@ -1222,13 +1276,15 @@
 				btn.className = "eppe-editbtn";
 				btn.innerHTML = "&#9998; Edit";
 				onTap(btn, () => {
+					/* Toggle: a second click on the edit button closes the popup */
+					if (popup.isOpen()) { popup.saveOrClose(); return; }
 					const t = editBtn && editBtn.target;
 					const n = editBtn && editBtn.node;
 					hideEditBtn();
 					if (!t) return;
-					/* Einheitlich über das Popup bearbeiten (robuster als Inline).
-					   Canvas-Knoten für Live-Vorschau mitgeben: bei Etch das <p>,
-					   bei GB das Content-Element der Vorschau. */
+					/* Edit uniformly through the popup (more robust than inline).
+					   Pass the canvas node for live preview: the <p> for Etch,
+					   the preview's content element for GB. */
 					popup.open({ ...t, mirrorEl: n || null });
 				});
 				doc.body.appendChild(btn);
@@ -1239,7 +1295,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Canvas-Vorschau für Gutenberg-Blöcke                              */
+		/* Canvas preview for Gutenberg blocks                               */
 		/* ---------------------------------------------------------------- */
 
 		function injectPreview(el, block, label) {
@@ -1285,14 +1341,14 @@
 			}, true);
 		}
 
-		/** Vorschau für Container-Passthroughs (core/group, core/columns, …):
-		    zeigt jeden verschachtelten Textblock als eigene, klickbare Zeile.
-		    Bearbeitung läuft über das Popup (mode "gbnested"). */
+		/** Preview for container passthroughs (core/group, core/columns, …):
+		    shows each nested text block as its own clickable line.
+		    editing happens via the popup (mode "gbnested"). */
 		function injectContainerPreview(el, block, label) {
 			const nested = collectNestedEditable(block.gutenbergBlock);
 			if (!nested.length) return;
 
-			/* Signatur zum Vermeiden unnötiger Neuaufbauten (Flackern) */
+			/* Signature to avoid unnecessary rebuilds (flicker) */
 			const sig = nested.map((n) => n.path.join(".") + ":" + n.innerHTML).join("||");
 			if (el.getAttribute("data-eppe-sig") === sig && el.getAttribute("data-eppe-preview") === "1") return;
 
@@ -1340,8 +1396,8 @@
 			el.style.background = "transparent";
 		}
 
-		/** Container-Passthrough anhand Label + Positionsindex auflösen
-		    (robust gegen id-Wechsel nach dem Speichern) */
+		/** Resolve a container passthrough by label + position index
+		    (robust against id changes after saving) */
 		function resolveContainerBlock(previewEl, label) {
 			const doc = previewEl.ownerDocument;
 			const peers = Array.from(doc.querySelectorAll(`[data-eppe-container="${label}"]`));
@@ -1352,7 +1408,7 @@
 			return blocks[idx] || blocks[0] || null;
 		}
 
-		/** Popup für einen verschachtelten Textblock öffnen */
+		/** Open the popup for a nested text block */
 		function openNestedPopup(previewEl, path, label, mirrorEl) {
 			const block = resolveContainerBlock(previewEl, label);
 			if (!block) { toast(previewEl.ownerDocument, "Container block not found.", true); return; }
@@ -1425,7 +1481,7 @@
 			for (const doc of iframeDocs()) {
 				if (!doc.body) continue;
 
-				/* 1) Neue Platzhalter mit Vorschau versehen */
+				/* 1) Add previews to new placeholders */
 				const counters = {};
 				doc.body.querySelectorAll("*:not([data-eppe-preview])").forEach((el) => {
 					if (el.children.length) return;
@@ -1441,14 +1497,14 @@
 					try {
 						if (isContainerPassthrough(block)) injectContainerPreview(el, block, t);
 						else injectPreview(el, block, t);
-					} catch (_) { /* Vorschau optional */ }
+					} catch (_) { /* preview is optional */ }
 				});
 
-				/* 2) Bereits injizierte Vorschauen mit dem frischen Blockinhalt
-				   abgleichen (z. B. nach einem GB-Speichervorgang) */
+				/* 2) Reconcile already-injected previews with the fresh block
+				   content (e.g. after a GB save) */
 				doc.querySelectorAll("[data-eppe-content]").forEach((content) => {
-					if (session && session.el === content) return; // wird gerade editiert
-					if (activeMirrorEl === content) return; // Live-Vorschau nicht überschreiben
+					if (session && session.el === content) return; // currently being edited
+					if (activeMirrorEl === content) return; // don't overwrite the live preview
 					const block = resolveGbBlockForPreview(content);
 					if (!block) return;
 					const outer = parseOuter(block.gutenbergBlock.innerHTML);
@@ -1461,10 +1517,10 @@
 					}
 				});
 
-				/* 3) Container-Vorschauen bei Änderung neu aufbauen
-				   (Signatur-Guard in injectContainerPreview verhindert Flackern) */
+				/* 3) Rebuild container previews when they change
+				   (signature guard in injectContainerPreview prevents flicker) */
 				doc.querySelectorAll("[data-eppe-container]").forEach((el) => {
-					if (activeMirrorEl && el.contains(activeMirrorEl)) return; // Live-Zeile schützen
+					if (activeMirrorEl && el.contains(activeMirrorEl)) return; // protect the live line
 					const label = el.getAttribute("data-eppe-container");
 					const block = resolveContainerBlock(el, label);
 					if (!block) return;
@@ -1473,8 +1529,8 @@
 			}
 		}
 
-		/** Vorschau nach einem Speichervorgang zeitversetzt mehrfach auffrischen
-		    (Etch rendert den Passthrough-Platzhalter asynchron neu) */
+		/** Refresh the preview several times, staggered, after a save
+		    (Etch re-renders the passthrough placeholder asynchronously) */
 		function refreshPreviewBurst() {
 			[150, 500, 1000, 1800].forEach((ms) =>
 				setTimeout(() => {
@@ -1505,7 +1561,7 @@
 				});
 			}
 
-			if (!candidates.length) return null; // Block evtl. (noch) nicht gerendert
+			if (!candidates.length) return null; // block may not be rendered (yet)
 			if (candidates.length === 1) return candidates[0];
 
 			/* Mehrere identische Texte: Position im Strukturbaum als Index nutzen */
@@ -1532,7 +1588,7 @@
 				});
 			try {
 				walk(etch.blocks.getTree());
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 
 			if (found && candidates[k]) return candidates[k];
 			log(`Canvas node ambiguous (${candidates.length} matches for <${tag}>) – popup fallback.`);
@@ -1540,10 +1596,10 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Workaround Etch-Bug (1.6.3): Doppelklick-Inline-Editor crasht     */
-		/* bei Absätzen mit Inline-Links ("reading 'count'"). Wir fangen     */
-		/* den Doppelklick ab, bevor er Etchs Editor erreicht, und öffnen    */
-		/* stattdessen unsere eigene Bearbeitung.                            */
+		/* Workaround Etch bug (1.6.3): double-click inline editor crashes   */
+		/* on paragraphs with inline links ("reading 'count'"). We catch    */
+		/* the double-click before it reaches Etch's editor and open        */
+		/* our own editor instead.                                          */
 		/* ---------------------------------------------------------------- */
 
 		function findEtchBlockForNode(node) {
@@ -1565,16 +1621,16 @@
 				});
 			try {
 				walk(etch.blocks.getTree());
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 			return matches.length === 1 ? matches[0] : null;
 		}
 
 		function installDblClickGuard(doc) {
 			if (doc.__eppeDblGuard) return;
 			doc.__eppeDblGuard = true;
-			/* Capture auf Dokument-Ebene läuft VOR Etchs Handlern (die tiefer
-			   im Baum hängen) – so erreicht der Doppelklick den fehlerhaften
-			   Inline-Editor gar nicht erst. */
+			/* Document-level capture runs BEFORE Etch's handlers (which sit
+			   deeper in the tree) – so the double-click never reaches the
+			   faulty inline editor at all. */
 			doc.addEventListener("dblclick", (e) => {
 				try {
 					if (session) return;
@@ -1583,7 +1639,7 @@
 					if (t.closest(".eppe-tb") || t.closest(".eppe-editbtn") || t.closest("[data-eppe-preview]")) return;
 					const container = t.closest(ETCH_TEXT_TAGS.join(","));
 					if (!container) return;
-					if (!container.querySelector("a")) return; // Bug betrifft nur Inline-Links
+					if (!container.querySelector("a")) return; // bug only affects inline links
 					e.preventDefault();
 					e.stopPropagation();
 					const block = findEtchBlockForNode(container);
@@ -1601,8 +1657,8 @@
 		/* Popup                                                             */
 		/* ---------------------------------------------------------------- */
 
-		/** BoundingRect eines Knotens in Koordinaten des Top-Fensters
-		    (rechnet iframe-Verschachtelung ein) */
+		/** Bounding rect of a node in top-window coordinates
+		    (accounts for iframe nesting) */
 		function nodeRectInTop(node) {
 			let r = node.getBoundingClientRect();
 			let rect = { top: r.top, left: r.left, bottom: r.bottom, right: r.right, width: r.width, height: r.height };
@@ -1634,15 +1690,10 @@
 					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic (em)">I</button>
 					<button class="eppe-btn" data-cmd="superscript" title="Superscript">x&sup2;</button>
 					<button class="eppe-btn" data-cmd="subscript" title="Subscript">x&#8322;</button>
-					<select class="eppe-select eppe-weight" title="font-weight">
-						<option value="">Wt</option>
-						<option value="300">300</option>
-						<option value="400">400</option>
-						<option value="500">500</option>
-						<option value="600">600</option>
-						<option value="700">700</option>
-						<option value="800">800</option>
-					</select>
+					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
+						<button class="eppe-btn eppe-wtbtn" title="Font weight" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span></button>
+						<div class="eppe-wt-results"></div>
+					</div>
 					<label class="eppe-btn eppe-colorlbl" title="Text color" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
 						<button class="eppe-btn eppe-varbtn" title="Theme color variable">var</button>
@@ -1672,7 +1723,7 @@
 			const linkInput = linkRow.querySelector("input");
 			const st = { mode: null, blockId: null, passthroughId: null, path: null, savedRange: null, originalHtml: "", saving: false, mirrorEl: null, mirrorOriginal: null };
 
-			/* Live-Vorschau: Popup-Inhalt in den Canvas-Knoten spiegeln (nur visuell) */
+			/* Live preview: mirror the popup content into the canvas node (visual only) */
 			function liveMirror() {
 				if (!st.mirrorEl) return;
 				try {
@@ -1681,7 +1732,7 @@
 					tmp.innerHTML = editor.innerHTML;
 					sanitizeEditorHtml(tmp);
 					if (st.mirrorEl.innerHTML !== tmp.innerHTML) st.mirrorEl.innerHTML = tmp.innerHTML;
-				} catch (_) { /* Vorschau optional */ }
+				} catch (_) { /* preview is optional */ }
 			}
 
 			const setStatus = (msg, cls) => {
@@ -1702,8 +1753,8 @@
 				const pw = panel.offsetWidth || 460;
 				const ph = panel.offsetHeight || 300;
 				let top = r.bottom + 12;
-				if (top + ph > window.innerHeight - 8) top = r.top - ph - 12;   // sonst darüber
-				if (top < 8) top = Math.max(8, window.innerHeight - ph - 8);     // sonst unten klemmen
+				if (top + ph > window.innerHeight - 8) top = r.top - ph - 12;   // otherwise above
+				if (top < 8) top = Math.max(8, window.innerHeight - ph - 8);     // otherwise clamp to bottom
 				let left = r.left;
 				left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
 				panel.style.left = left + "px";
@@ -1741,15 +1792,15 @@
 				linkRow.style.display = "none";
 				panel.style.display = "block";
 				st.originalHtml = editor.innerHTML;
-				/* Canvas-Knoten für Live-Vorschau merken */
+				/* Remember the canvas node for live preview */
 				st.mirrorEl = target.mirrorEl || null;
 				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
-				activeMirrorEl = st.mirrorEl; // vor Vorschau-Abgleich schützen
-				positionPopup(st.mirrorEl);   // nah am Text platzieren
+				activeMirrorEl = st.mirrorEl; // protect from preview reconciliation
+				positionPopup(st.mirrorEl);   // position near the text
 				editor.focus();
 			}
 			function close(discard) {
-				/* Beim Verwerfen die Live-Vorschau im Canvas zurücksetzen */
+				/* On discard, reset the live preview in the canvas */
 				if (discard && st.mirrorEl && st.mirrorOriginal != null) {
 					try { if (st.mirrorEl.isConnected) st.mirrorEl.innerHTML = st.mirrorOriginal; } catch (_) { /* ignore */ }
 				}
@@ -1763,11 +1814,11 @@
 				st.mirrorOriginal = null;
 				activeMirrorEl = null;
 			}
-			/* Live-Vorschau bei jeder Änderung im Editor aktualisieren */
+			/* Update the live preview on every change in the editor */
 			new MutationObserver(() => liveMirror()).observe(editor, {
 				childList: true, subtree: true, characterData: true, attributes: true,
 			});
-			/* Schließen (verwerfen) robust: schon auf mousedown reagieren */
+			/* Close (discard) robustly: react already on mousedown */
 			$(".eppe-close").addEventListener("mousedown", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
@@ -1775,16 +1826,18 @@
 			});
 			$(".eppe-cancel").addEventListener("click", () => close(true));
 
-			/* Auto-Speichern beim Klick außerhalb des Popups (Top-Fenster + Canvas) */
+			/* Auto-save on click outside the popup (top window + canvas) */
 			const onOutsideDown = (e) => {
 				if (panel.style.display !== "block" || st.saving) return;
 				const t = e.target;
 				try { if (t && panel.contains(t)) return; } catch (_) { /* cross-doc */ }
+				/* the edit button handles its own toggle (open/close) */
+				try { if (t && t.closest && t.closest(".eppe-editbtn")) return; } catch (_) { /* ignore */ }
 				if (editor.innerHTML !== st.originalHtml) doSave();
 				else close();
 			};
 			document.addEventListener("mousedown", onOutsideDown, true);
-			// zusätzlich in allen Canvas-iframes lauschen
+			// also listen in all canvas iframes
 			setInterval(() => {
 				iframeDocs().forEach((d) => {
 					if (!d.__eppePopupOutside) {
@@ -1797,8 +1850,8 @@
 			(() => {
 				const head = $(".eppe-head");
 				let drag = null;
-				/* Pointer-Events + setPointerCapture: Drag bleibt flüssig, auch
-				   wenn der Cursor über das Canvas-iframe fährt */
+				/* Pointer events + setPointerCapture: dragging stays smooth even
+				   when the cursor moves over the canvas iframe */
 				head.addEventListener("pointerdown", (e) => {
 					if (e.target.closest(".eppe-close")) return;
 					const r = panel.getBoundingClientRect();
@@ -1864,7 +1917,7 @@
 					span.appendChild(range.extractContents());
 					range.insertNode(span);
 				}
-				/* 1) Gleiche Eigenschaft aus INNEREN Elementen entfernen */
+				/* 1) Remove the same property from INNER elements */
 				span.querySelectorAll("*").forEach((d) => {
 					if (d.style && d.style.getPropertyValue(cssProp)) d.style.removeProperty(cssProp);
 					if (d.tagName === "SPAN" && !d.getAttribute("style") && !d.className) {
@@ -1872,8 +1925,8 @@
 						d.remove();
 					}
 				});
-				/* 2) Gleiche Eigenschaft aus VORFAHREN entfernen, die exakt denselben
-				   Text umschließen (so lösen sich gestapelte Farb-Spans auf). */
+				/* 2) Remove the same property from ANCESTORS that wrap exactly the
+				   same text (this collapses stacked color spans). */
 				const selText = normText(span.textContent);
 				let anc = span.parentNode;
 				while (anc && anc !== editor && anc.nodeType === 1 &&
@@ -1887,31 +1940,56 @@
 					}
 					anc = next;
 				}
+				coalesceSpans(editor); // combine font-weight + color into ONE span
 				editor.normalize();
 				saveRange();
 				setStatus(label + " applied.");
 			};
 
-			$(".eppe-weight").addEventListener("change", (e) => {
-				const weight = e.target.value;
-				e.target.value = "";
-				if (weight) applyPopupSpanStyle("fontWeight", weight, "font-weight " + weight);
+			/* --- Font weight (icon button with a selection list) --- */
+			const wtBtn = $(".eppe-wtbtn");
+			const wtResults = $(".eppe-wt-results");
+			const WEIGHTS = [
+				["300", "Light"], ["400", "Regular"], ["500", "Medium"],
+				["600", "Semibold"], ["700", "Bold"], ["800", "Extrabold"],
+			];
+			wtBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			wtBtn.addEventListener("click", () => {
+				if (wtResults.classList.contains("open")) { wtResults.className = "eppe-wt-results"; return; }
+				saveRange();
+				if (!st.savedRange || st.savedRange.collapsed) {
+					setStatus("Please select the text here in the editing field.", "error");
+					return;
+				}
+				wtResults.innerHTML = WEIGHTS.map(([v, l]) =>
+					`<div class="eppe-var-row" data-wt="${v}">` +
+					`<span class="eppe-var-name" style="font-weight:${v}">${l} · ${v}</span></div>`
+				).join("");
+				wtResults.className = "eppe-wt-results open";
+				wtResults.querySelectorAll(".eppe-var-row").forEach((row) => {
+					row.addEventListener("mousedown", (e) => {
+						e.preventDefault();
+						const v = row.getAttribute("data-wt");
+						applyPopupSpanStyle("fontWeight", v, "font-weight " + v);
+						wtResults.className = "eppe-wt-results";
+					});
+				});
 			});
 
 			$(".eppe-color").addEventListener("mousedown", (e) => e.stopPropagation());
 			$(".eppe-color").addEventListener("input", (e) => applyPopupSpanStyle("color", e.target.value, "Color"));
 
-			/* --- Theme-Farbvariablen (Tokens) --- */
+			/* --- Theme color variables (tokens) --- */
 			const varBtn = $(".eppe-varbtn");
 			const varResults = $(".eppe-var-results");
-			let tokenNames = null; // erst beim ersten Öffnen geladen
+			let tokenNames = null; // loaded on first open
 
 			function ensureTokens() {
 				if (tokenNames) return;
 				const map = collectAllVars();
 				tokenNames = colorTokenNames(map);
-				/* Alle Variablen auf das Panel setzen, damit var(--x) auch im
-				   Popup (Top-Dokument) auflösbar ist – für Swatch & Live-Vorschau */
+				/* Set all variables on the panel so var(--x) is resolvable in the
+				   popup (top document) too – for swatches & live preview */
 				for (const [n, v] of Object.entries(map)) {
 					try { panel.style.setProperty(n, v); } catch (_) { /* ignore */ }
 				}
@@ -1972,7 +2050,7 @@
 			varBtn.addEventListener("mousedown", (e) => e.preventDefault());
 			varBtn.addEventListener("click", () => {
 				if (varResults.classList.contains("open")) { varResults.className = "eppe-var-results"; return; }
-				saveRange(); // Auswahl vor dem Öffnen sichern
+				saveRange(); // save the selection before opening
 				if (!st.savedRange || st.savedRange.collapsed) {
 					setStatus("Please select the text here in the editing field.", "error");
 					return;
@@ -2014,7 +2092,7 @@
 				if (q.length < 2) { renderResults(null); return; }
 				searchTimer = setTimeout(async () => {
 					try { renderResults(await searchInternal(q)); }
-					catch (e) { log("Interne Suche fehlgeschlagen:", String(e)); renderResults(null); }
+					catch (e) { log("Internal search failed:", String(e)); renderResults(null); }
 				}, 250);
 			};
 
@@ -2099,7 +2177,7 @@
 						try { etch.blocks.select(newId); } catch (_) { /* optional */ }
 					}
 					st.saving = false;
-					close(); // nach Auto-Speichern schließen
+					close(); // close after auto-save
 					try { runPreviewScan(); } catch (_) { /* sofortige Aktualisierung */ }
 					refreshPreviewBurst(); // + zeitversetzt (Etch rendert asynchron)
 				} catch (e) {
@@ -2120,11 +2198,18 @@
 				}
 			});
 
-			return { open, close, isOpen: () => panel.style.display === "block" };
+			/* Close like a click-outside: save if changed, otherwise just close */
+			function saveOrClose() {
+				if (panel.style.display !== "block" || st.saving) return;
+				if (editor.innerHTML !== st.originalHtml) doSave();
+				else close();
+			}
+
+			return { open, close, saveOrClose, isOpen: () => panel.style.display === "block" };
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Launcher (nur noch Popup-Fallback)                                */
+		/* Launcher (popup fallback only)                                    */
 		/* ---------------------------------------------------------------- */
 
 		const launcher = document.createElement("button");
@@ -2154,7 +2239,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Auswahl-Polling                                                   */
+		/* Selection polling                                                 */
 		/* ---------------------------------------------------------------- */
 
 		setInterval(() => {
@@ -2164,7 +2249,7 @@
 			let selId = null;
 			try {
 				selId = etch.blocks.getSelectedId();
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 
 			if (!selId) {
 				if (lastSelected !== null) {
@@ -2178,9 +2263,9 @@
 			const selChanged = selId !== lastSelected;
 			lastSelected = selId;
 
-			/* Button steht bereits am richtigen Text → nichts zu tun.
-			   Fehlt er (z. B. weil das Canvas beim letzten Versuch mitten im
-			   Re-Render war), wird die Suche bei jedem Tick wiederholt. */
+			/* Button is already next to the right text → nothing to do.
+			   If it's missing (e.g. because the canvas was mid re-render on the
+			   last attempt), the search is retried on every tick. */
 			if (!selChanged && editBtn) return;
 
 			const target = resolveTarget(selId);
@@ -2192,7 +2277,7 @@
 			}
 			launcherTarget = target;
 
-			/* Canvas-Knoten suchen → Edit-Button direkt am Text */
+			/* Find the canvas node → edit button right next to the text */
 			const node = target.mode === "etch"
 				? findCanvasNodeForEtch(target.block)
 				: findPreviewNodeForGb(target.block);
@@ -2211,12 +2296,12 @@
 		}, POLL_MS);
 
 		/* ---------------------------------------------------------------- */
-		/* Vorschau-Loop                                                     */
+		/* Preview loop                                                      */
 		/* ---------------------------------------------------------------- */
 
 		setInterval(() => {
 			try {
-				iframeDocs().forEach(installDblClickGuard); // Link-Bug-Workaround aktiv halten
+				iframeDocs().forEach(installDblClickGuard); // keep the link-bug workaround active
 			} catch (_) { /* optional */ }
 			if (session) return;
 			try {
@@ -2281,13 +2366,18 @@
 			width: auto; max-width: 62px;
 		}
 		.eppe-btn { white-space: nowrap; }
-		.eppe-var-results {
+		.eppe-var-results, .eppe-wt-results {
 			display: none; position: absolute; left: 0; top: 100%; margin-top: 4px;
 			width: 240px; max-height: 260px; overflow: auto; z-index: 10;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 8px;
 			box-shadow: 0 8px 28px rgba(0,0,0,.55);
 		}
-		.eppe-var-results.open { display: block; }
+		.eppe-wt-results { width: 150px; }
+		.eppe-var-results.open, .eppe-wt-results.open { display: block; }
+		.eppe-wtbtn { display: inline-flex; align-items: center; justify-content: center; gap: 1px; line-height: 1; }
+		.eppe-wt-a { font-size: 15px; line-height: 1; }
+		.eppe-wt-thin { font-weight: 100; }
+		.eppe-wt-bold { font-weight: 900; }
 		.eppe-var-filter {
 			width: 100%; box-sizing: border-box; background: #17171c; color: #f4f4f6;
 			border: none; border-bottom: 1px solid #3a3a44; padding: 7px 9px; font-size: 12px; outline: none;
@@ -2317,8 +2407,8 @@
 			padding: 12px 14px; outline: none; font-size: 14px; line-height: 1.6;
 			background: #17171c; color: #f4f4f6;
 		}
-		/* Inline-Elemente gegen globales Theme-/ACSS-CSS zurücksetzen,
-		   damit z. B. Links nicht als Block in eine eigene Zeile rutschen */
+		/* Reset inline elements against global theme/ACSS CSS
+		   so that e.g. links don't drop onto their own line as blocks */
 		.eppe-editor a, .eppe-editor strong, .eppe-editor em, .eppe-editor span,
 		.eppe-editor u, .eppe-editor s, .eppe-editor mark, .eppe-editor code,
 		.eppe-editor sub, .eppe-editor sup {
