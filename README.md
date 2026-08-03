@@ -16,10 +16,14 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
   - Text blocks nested inside Gutenberg **containers** (`core/group`, `core/columns`, `core/column`, …)
 - **Canvas preview**: Gutenberg passthrough placeholders show their real text (with a `GB` badge) instead of an empty `core/*` placeholder.
 - **Live preview**: formatting applied in the popup is mirrored into the canvas immediately (visual only; persisted on close).
-- **Inline formatting toolbar**: bold (`strong`), italic (`em`), superscript, subscript, font-weight, text color, link, clear formatting.
+- **Inline formatting toolbar**: bold (`strong`), italic (`em`), strikethrough (`s`), superscript, subscript, font-weight, text color, links, clear formatting.
 - **Color via theme tokens**: pick ACSS / CSS custom-property color tokens (grouped by family) and apply them as `color: var(--token)`.
-- **Link search**: type to search internal pages, posts and media (WordPress REST API) instead of pasting a URL.
-- **Auto-save**: saving happens on click-outside or `Cmd/Ctrl+Enter`; `Esc`/Close discards.
+- **Links**: type a URL or search internal pages, posts and media (WordPress REST API). Placing the caret inside an existing link opens it for editing with the current URL prefilled; removing a link works from the caret too.
+- **Insert menu (¶)**: line break, soft hyphen (`&shy;`) and non-breaking space (`&nbsp;`) at the caret.
+- **Paste as plain text**: pasted content from Word/Pages/websites is stripped of all formatting.
+- **Clean markup**: multiple inline styles on the same selection are merged into a single `<span>`; empty leftovers are removed; literal `<br>` becomes a real line break.
+- **Resizable, draggable popup**: drag the header to move it, the bottom-right corner to resize; it opens next to the text you're editing.
+- **Auto-save**: closing saves — via the X, the Close button or a click outside (also `Cmd/Ctrl+Enter`). Discarding is explicit: the **Discard** button or `Esc`.
 - **Sync-safe**: Gutenberg blocks stay core blocks, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
 
 ## How it works
@@ -39,10 +43,12 @@ If you use a page cache (e.g. LiteSpeed), purge it after updating so the builder
 
 ## Usage
 
-- Select a text block in the builder → click **✎ Edit** (appears near the text), or click a `GB` canvas preview.
-- Format via the toolbar. For color, use the native picker or the **var** button to choose a theme token.
-- For links, type a URL or a search term to pick an internal page/post/media item.
-- Click outside the popup (or `Cmd/Ctrl+Enter`) to save; `Esc`/Close to discard.
+- Select a text block in the builder → click **✎ Edit** (appears next to the text), or click a `GB` canvas preview. A second click on **✎ Edit** closes the popup again.
+- Select some text and format it via the toolbar. Buttons with a caret (▾) open a dropdown — font weight, color tokens (**var**) and the insert menu (**¶**).
+- For color, use the native picker or **var** to pick a theme token.
+- For links, type a URL or a search term to pick an internal page/post/media item. To change an existing link, place the caret inside it and open the link button — the current URL is prefilled.
+- Pasting always inserts plain text; format it afterwards with the toolbar.
+- **Saving**: click outside the popup, use the **Close** button or the X, or press `Cmd/Ctrl+Enter`. **Discarding**: the **Discard** button or `Esc`.
 
 ## Known limitations
 
