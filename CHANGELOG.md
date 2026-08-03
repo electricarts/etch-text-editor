@@ -2,6 +2,28 @@
 
 All notable changes to this project.
 
+## 0.21.2
+- Dropdown buttons (font weight, color tokens, insert menu) now show a caret indicator; while open they are highlighted and the caret flips.
+
+## 0.21.1
+- Wider popup (560px default) so the whole toolbar fits on one row.
+
+## 0.21.0
+- New: strikethrough button.
+- New: insert menu (¶) with line break, soft hyphen and non-breaking space.
+- Link editing: with the caret inside an existing link, the link button opens with the current URL prefilled; Apply updates it. Remove link now also works with just the caret inside a link.
+- The double-click workaround now opens the popup editor (consistent with all other entry points).
+
+## 0.20.2
+- Toolbar dropdowns (font weight, color tokens, link search) now close when clicking anywhere outside them.
+
+## 0.20.1
+- Consistent closing behavior: X, the Close button and clicking outside now all SAVE changes. Discarding is explicit via the new "Discard" button or Esc.
+
+## 0.20.0
+- The popup is now resizable (drag the bottom-right corner); the editing area grows with it.
+- Pasting now always inserts plain text — all clipboard formatting (Word/Pages colors, font sizes, classes) is stripped.
+
 ## 0.19.5
 - Reverted the font-weight icon to real font letters (thin/bold "A", equal size) for the cleanest look.
 

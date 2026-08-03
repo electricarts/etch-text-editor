@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v0.19.5
+ * Etch Text Editor v0.21.2
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "0.19.5";
+	const VERSION = "0.21.2";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -304,6 +304,16 @@
 				}
 			});
 		}
+	}
+
+	/** Paste as plain text: strips ALL formatting from pasted content
+	    (Word/Pages clipboard HTML brings colors, font sizes, classes, …). */
+	function handlePlainPaste(e, doc) {
+		const cb = e.clipboardData;
+		if (!cb) return;
+		e.preventDefault();
+		const text = cb.getData("text/plain");
+		if (text) (doc || document).execCommand("insertText", false, text);
 	}
 
 	/** Leere Inline-Elemente rekursiv auspacken (z. B. <strong></strong>-Reste) */
@@ -966,6 +976,11 @@
 				el.addEventListener(t, stop, true);
 				cleanup.push(() => el.removeEventListener(t, stop, true));
 			});
+
+			/* Paste always as plain text (strip Word/Pages formatting) */
+			const onPaste = (e) => handlePlainPaste(e, doc);
+			el.addEventListener("paste", onPaste, true);
+			cleanup.push(() => el.removeEventListener("paste", onPaste, true));
 
 			/* Don't let toolbar events leak to Etch (bubble phase) */
 			["mousedown", "mouseup", "click", "dblclick", "keydown", "keyup", "input", "paste"].forEach((t) => {
@@ -1645,7 +1660,7 @@
 					const block = findEtchBlockForNode(container);
 					if (block) {
 						log("Bypassed Etch's inline editor (link-bug workaround), opening plugin editor.");
-						startSession("etch", container, () => block.id);
+						popup.open({ mode: "etch", block, mirrorEl: container });
 					} else {
 						toast(doc, "Skipped Etch's inline editor (link bug in Etch 1.6.3). Please use the ✎ Edit button.", true);
 					}
@@ -1688,19 +1703,24 @@
 				<div class="eppe-toolbar">
 					<button class="eppe-btn" data-cmd="bold" title="Bold (strong)">B</button>
 					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic (em)">I</button>
+					<button class="eppe-btn" data-cmd="strikeThrough" title="Strikethrough" style="text-decoration:line-through;">S</button>
 					<button class="eppe-btn" data-cmd="superscript" title="Superscript">x&sup2;</button>
 					<button class="eppe-btn" data-cmd="subscript" title="Subscript">x&#8322;</button>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-wtbtn" title="Font weight" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span></button>
+						<button class="eppe-btn eppe-wtbtn eppe-hasmenu" title="Font weight" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span><svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-wt-results"></div>
 					</div>
 					<label class="eppe-btn eppe-colorlbl" title="Text color" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-varbtn" title="Theme color variable">var</button>
+						<button class="eppe-btn eppe-varbtn eppe-hasmenu" title="Theme color variable">var<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-var-results"></div>
 					</div>
-					<button class="eppe-btn eppe-linkbtn" title="Add link">&#128279;</button>
+					<button class="eppe-btn eppe-linkbtn" title="Add / edit link">&#128279;</button>
 					<button class="eppe-btn" data-cmd="unlink" title="Remove link">&#128279;&#10060;</button>
+					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
+						<button class="eppe-btn eppe-charbtn eppe-hasmenu" title="Insert: line break, soft hyphen, non-breaking space">&para;<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<div class="eppe-char-results"></div>
+					</div>
 					<button class="eppe-btn eppe-clear" title="Clear formatting">T&#8339;</button>
 				</div>
 				<div class="eppe-linkrow" style="position:relative;">
@@ -1711,7 +1731,8 @@
 				<div class="eppe-editor" contenteditable="true" spellcheck="true"></div>
 				<div class="eppe-foot">
 					<span class="eppe-status">Ready</span>
-					<button class="eppe-cancel" title="Discard (Esc) – clicking outside saves">Close</button>
+					<button class="eppe-cancel" title="Discard changes (Esc)">Discard</button>
+					<button class="eppe-save eppe-closebtn" title="Save changes and close">Close</button>
 				</div>
 			`;
 			document.body.appendChild(panel);
@@ -1790,8 +1811,9 @@
 				}
 				setStatus("Ready");
 				linkRow.style.display = "none";
-				panel.style.display = "block";
+				panel.style.display = "flex";
 				st.originalHtml = editor.innerHTML;
+				st.editingLink = null;
 				/* Remember the canvas node for live preview */
 				st.mirrorEl = target.mirrorEl || null;
 				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
@@ -1810,6 +1832,7 @@
 				st.passthroughId = null;
 				st.path = null;
 				st.originalHtml = "";
+				st.editingLink = null;
 				st.mirrorEl = null;
 				st.mirrorOriginal = null;
 				activeMirrorEl = null;
@@ -1818,17 +1841,19 @@
 			new MutationObserver(() => liveMirror()).observe(editor, {
 				childList: true, subtree: true, characterData: true, attributes: true,
 			});
-			/* Close (discard) robustly: react already on mousedown */
+			/* Closing (X, Close button, click outside) SAVES changes;
+			   discarding is the explicit "Discard" button or Esc. */
 			$(".eppe-close").addEventListener("mousedown", (e) => {
 				e.preventDefault();
 				e.stopPropagation();
-				close(true);
+				saveOrClose();
 			});
+			$(".eppe-closebtn").addEventListener("click", () => saveOrClose());
 			$(".eppe-cancel").addEventListener("click", () => close(true));
 
 			/* Auto-save on click outside the popup (top window + canvas) */
 			const onOutsideDown = (e) => {
-				if (panel.style.display !== "block" || st.saving) return;
+				if (panel.style.display === "none" || panel.style.display === "" || st.saving) return;
 				const t = e.target;
 				try { if (t && panel.contains(t)) return; } catch (_) { /* cross-doc */ }
 				/* the edit button handles its own toggle (open/close) */
@@ -1892,11 +1917,29 @@
 			};
 			editor.addEventListener("keyup", saveRange);
 			editor.addEventListener("mouseup", saveRange);
+			/* Paste always as plain text (strip Word/Pages formatting) */
+			editor.addEventListener("paste", (e) => {
+				handlePlainPaste(e, document);
+				saveRange();
+			});
 
 			panel.querySelectorAll("[data-cmd]").forEach((btn) => {
 				btn.addEventListener("mousedown", (e) => e.preventDefault());
 				btn.addEventListener("click", () => {
 					editor.focus();
+					/* Unlink also works with just the caret inside a link */
+					if (btn.dataset.cmd === "unlink") {
+						saveRange();
+						const a = linkAtSelection();
+						if (a && (!st.savedRange || st.savedRange.collapsed)) {
+							while (a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
+							a.remove();
+							editor.normalize();
+							saveRange();
+							setStatus("Link removed.");
+							return;
+						}
+					}
 					document.execCommand(btn.dataset.cmd, false, null);
 					saveRange();
 				});
@@ -1972,6 +2015,39 @@
 						const v = row.getAttribute("data-wt");
 						applyPopupSpanStyle("fontWeight", v, "font-weight " + v);
 						wtResults.className = "eppe-wt-results";
+					});
+				});
+			});
+
+			/* --- Insert menu (line break, soft hyphen, non-breaking space) --- */
+			const charBtn = $(".eppe-charbtn");
+			const charResults = $(".eppe-char-results");
+			const CHAR_ITEMS = [
+				["br", "&#8629; Line break", "Shift+Enter"],
+				["shy", "Soft hyphen", "invisible"],
+				["nbsp", "Non-breaking space", "invisible"],
+			];
+			charBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			charBtn.addEventListener("click", () => {
+				if (charResults.classList.contains("open")) { charResults.className = "eppe-char-results"; return; }
+				saveRange();
+				charResults.innerHTML = CHAR_ITEMS.map(([k, label, hint]) =>
+					`<div class="eppe-var-row" data-char="${k}">` +
+					`<span class="eppe-var-name">${label}</span>` +
+					`<span class="eppe-char-hint">${hint}</span></div>`
+				).join("");
+				charResults.className = "eppe-char-results open";
+				charResults.querySelectorAll(".eppe-var-row").forEach((row) => {
+					row.addEventListener("mousedown", (e) => {
+						e.preventDefault();
+						const k = row.getAttribute("data-char");
+						if (!restoreRange()) editor.focus();
+						if (k === "br") document.execCommand("insertHTML", false, "<br>");
+						else if (k === "shy") document.execCommand("insertText", false, "\u00AD");
+						else document.execCommand("insertText", false, "\u00A0");
+						charResults.className = "eppe-char-results";
+						saveRange();
+						setStatus(k === "br" ? "Line break inserted." : k === "shy" ? "Soft hyphen inserted." : "Non-breaking space inserted.");
 					});
 				});
 			});
@@ -2096,21 +2172,47 @@
 				}, 250);
 			};
 
+			/* Link at the current selection/caret (for editing an existing link) */
+			const linkAtSelection = () => {
+				const r = st.savedRange;
+				if (!r) return null;
+				let n = r.commonAncestorContainer;
+				if (n && n.nodeType === 3) n = n.parentNode;
+				const a = n && n.closest ? n.closest("a") : null;
+				return a && editor.contains(a) ? a : null;
+			};
+
 			$(".eppe-linkbtn").addEventListener("mousedown", (e) => e.preventDefault());
 			$(".eppe-linkbtn").addEventListener("click", () => {
 				saveRange();
-				if (!st.savedRange || st.savedRange.collapsed) {
+				const a = linkAtSelection();
+				/* Caret inside an existing link → edit it; otherwise a selection is required */
+				if ((!st.savedRange || st.savedRange.collapsed) && !a) {
 					setStatus("Please select the text here in the editing field (not in the canvas).", "error");
 					return;
 				}
+				st.editingLink = a || null;
 				linkRow.style.display = "flex";
-				linkInput.value = "";
+				linkInput.value = a ? (a.getAttribute("href") || "") : "";
 				renderResults(null);
 				linkInput.focus();
+				if (linkInput.value) linkInput.select();
+				setStatus(a ? "Editing existing link." : "Ready");
 			});
 			const applyLink = () => {
 				const url = linkInput.value.trim();
 				if (!url) return;
+				/* Editing an existing link: just update its href */
+				if (st.editingLink && st.editingLink.isConnected) {
+					st.editingLink.setAttribute("href", url);
+					st.editingLink = null;
+					linkRow.style.display = "none";
+					renderResults(null);
+					setStatus("Link updated: " + url);
+					editor.focus();
+					saveRange();
+					return;
+				}
 				if (!restoreRange()) { setStatus("Selection lost – please select the text again.", "error"); return; }
 				editor.focus();
 				restoreRange();
@@ -2141,6 +2243,36 @@
 					else linkRow.style.display = "none";
 				}
 			});
+
+			/* Keep the dropdown buttons' "open" state (caret + highlight) in sync
+			   with their panels, no matter how they were opened or closed */
+			[[wtBtn, wtResults], [varBtn, varResults], [charBtn, charResults]].forEach(([b, r]) => {
+				new MutationObserver(() => b.classList.toggle("open", r.classList.contains("open")))
+					.observe(r, { attributes: true, attributeFilter: ["class"] });
+			});
+
+			/* Close open dropdowns (weight, tokens, link results) when clicking
+			   anywhere else inside the popup */
+			panel.addEventListener("mousedown", (e) => {
+				const t = e.target;
+				if (!t || !t.closest) return;
+				if (wtResults.classList.contains("open") &&
+					!t.closest(".eppe-wt-results") && !t.closest(".eppe-wtbtn")) {
+					wtResults.className = "eppe-wt-results";
+				}
+				if (charResults.classList.contains("open") &&
+					!t.closest(".eppe-char-results") && !t.closest(".eppe-charbtn")) {
+					charResults.className = "eppe-char-results";
+				}
+				if (varResults.classList.contains("open") &&
+					!t.closest(".eppe-var-results") && !t.closest(".eppe-varbtn")) {
+					varResults.className = "eppe-var-results";
+				}
+				if (linkResults.classList.contains("open") &&
+					!t.closest(".eppe-tb-results") && !t.closest(".eppe-linkrow")) {
+					renderResults(null);
+				}
+			}, true);
 
 			$(".eppe-clear").addEventListener("mousedown", (e) => e.preventDefault());
 			$(".eppe-clear").addEventListener("click", () => {
@@ -2200,12 +2332,12 @@
 
 			/* Close like a click-outside: save if changed, otherwise just close */
 			function saveOrClose() {
-				if (panel.style.display !== "block" || st.saving) return;
+				if (panel.style.display === "none" || panel.style.display === "" || st.saving) return;
 				if (editor.innerHTML !== st.originalHtml) doSave();
 				else close();
 			}
 
-			return { open, close, saveOrClose, isOpen: () => panel.style.display === "block" };
+			return { open, close, saveOrClose, isOpen: () => panel.style.display !== "none" && panel.style.display !== "" };
 		}
 
 		/* ---------------------------------------------------------------- */
@@ -2332,10 +2464,12 @@
 		.eppe-launcher:hover { background: #6d28d9; }
 		.eppe-panel {
 			position: fixed; right: 20px; bottom: 64px; z-index: 1000000;
-			width: 460px; max-width: calc(100vw - 40px);
+			width: 560px; max-width: calc(100vw - 40px);
+			min-width: 420px; min-height: 260px;
 			background: #1e1e24; color: #e5e5ea; border: 1px solid #3a3a44;
 			border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
 			font: 13px/1.5 system-ui, sans-serif; display: none;
+			flex-direction: column; resize: both; overflow: hidden;
 		}
 		.eppe-panel * { box-sizing: border-box; }
 		.eppe-head {
@@ -2366,15 +2500,24 @@
 			width: auto; max-width: 62px;
 		}
 		.eppe-btn { white-space: nowrap; }
-		.eppe-var-results, .eppe-wt-results {
+		.eppe-var-results, .eppe-wt-results, .eppe-char-results {
 			display: none; position: absolute; left: 0; top: 100%; margin-top: 4px;
 			width: 240px; max-height: 260px; overflow: auto; z-index: 10;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 8px;
 			box-shadow: 0 8px 28px rgba(0,0,0,.55);
 		}
 		.eppe-wt-results { width: 150px; }
-		.eppe-var-results.open, .eppe-wt-results.open { display: block; }
+		.eppe-char-results { width: 230px; left: auto; right: 0; }
+		.eppe-var-results.open, .eppe-wt-results.open, .eppe-char-results.open { display: block; }
+		.eppe-char-results .eppe-var-row { justify-content: space-between; }
+		.eppe-char-hint { font-size: 10px; color: #a1a1ab; text-transform: uppercase; letter-spacing: .4px; }
+		/* Buttons that open a dropdown: caret indicator + active state */
+		.eppe-hasmenu { display: inline-flex; align-items: center; gap: 4px; }
+		.eppe-caret { opacity: .55; flex: none; transition: transform .12s ease; }
+		.eppe-hasmenu.open { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+		.eppe-hasmenu.open .eppe-caret { opacity: 1; transform: rotate(180deg); }
 		.eppe-wtbtn { display: inline-flex; align-items: center; justify-content: center; gap: 1px; line-height: 1; }
+		.eppe-wtbtn .eppe-caret { margin-left: 3px; }
 		.eppe-wt-a { font-size: 15px; line-height: 1; }
 		.eppe-wt-thin { font-weight: 100; }
 		.eppe-wt-bold { font-weight: 900; }
@@ -2403,10 +2546,11 @@
 			padding: 6px 9px 4px; border-top: 1px solid #2a2a32;
 		}
 		.eppe-editor {
-			min-height: 90px; max-height: 40vh; overflow: auto;
+			flex: 1 1 auto; min-height: 90px; max-height: 60vh; overflow: auto;
 			padding: 12px 14px; outline: none; font-size: 14px; line-height: 1.6;
 			background: #17171c; color: #f4f4f6;
 		}
+		.eppe-panel[style*="height"] .eppe-editor { max-height: none; }
 		/* Reset inline elements against global theme/ACSS CSS
 		   so that e.g. links don't drop onto their own line as blocks */
 		.eppe-editor a, .eppe-editor strong, .eppe-editor em, .eppe-editor span,
