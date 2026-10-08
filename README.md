@@ -2,6 +2,10 @@
 
 A WordPress plugin that adds a graphical text-editing popup to the [Etch](https://etchwp.com) builder — for both **Etch text elements** and **Gutenberg text** that lives in Etch as passthrough blocks.
 
+![Etch Text Editor popup](assets/popup.png)
+
+&nbsp;
+
 > Built on top of Etch's experimental Public API (`window.etch`). Etch marks this API as **experimental (0.x)**; breaking changes can occur between Etch releases.
 
 ## Why
