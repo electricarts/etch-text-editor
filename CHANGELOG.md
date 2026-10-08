@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 0.21.7
+- Fixed: the link and unlink buttons now use the exact flat `link-2` and `unlink-2` icon geometry shown in the preview.
+
 ## 0.21.6
 - Changed: replaced the 3D emoji link/unlink buttons with flat, monochrome outline icons matching the rest of the toolbar.
 

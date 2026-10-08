@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v0.21.6
+ * Etch Text Editor v0.21.7
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "0.21.6";
+	const VERSION = "0.21.7";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -36,15 +36,14 @@
 	const LINK_ICON_SVG =
 		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
-		`<path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/>` +
-		`<path d="M14 11a5 5 0 0 0-7.07 0l-2.12 2.12a5 5 0 0 0 7.07 7.07L13 19.07"/>` +
+		`<path d="M9 17H7A5 5 0 0 1 7 7h2"/>` +
+		`<path d="M15 7h2a5 5 0 1 1 0 10h-2"/>` +
+		`<line x1="8" x2="16" y1="12" y2="12"/>` +
 		`</svg>`;
 	const UNLINK_ICON_SVG =
 		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
 		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
-		`<path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/>` +
-		`<path d="M14 11a5 5 0 0 0-7.07 0l-2.12 2.12a5 5 0 0 0 7.07 7.07L13 19.07"/>` +
-		`<path d="m2 2 20 20"/>` +
+		`<path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"/>` +
 		`</svg>`;
 
 	const ETCH_TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption"];
