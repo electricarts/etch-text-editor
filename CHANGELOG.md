@@ -2,6 +2,20 @@
 
 All notable changes to this project.
 
+## 0.22.3
+- Changed: link editing is now compact by default; URL, **Options**, **Apply** and **Cancel** stay visible, while title, target and `rel` appear on demand. The default popup width is reduced to 640px.
+
+## 0.22.2
+- New: a visible **Cancel** button exits link editing without closing the main popup; the current text selection is restored.
+
+## 0.22.1
+- Fixed: the popup now opens at 720px by default so the complete link editor, including **Apply**, is visible without manual resizing; it remains responsive on smaller screens.
+
+## 0.22.0
+- New: local undo/redo history with toolbar buttons and `Cmd/Ctrl+Z`, `Cmd/Ctrl+Shift+Z` or `Ctrl+Y` shortcuts.
+- New: link editing supports title, target (`same tab`, `new tab`, parent/top frame) and custom `rel` values; `_blank` links automatically include `noopener`.
+- New: safer saving detects changes made outside the popup and offers **Reload latest** or **Keep mine** before overwriting them. Save failures keep the popup open so the user can retry.
+
 ## 0.21.7
 - Fixed: the link and unlink buttons now use the exact flat `link-2` and `unlink-2` icon geometry shown in the preview.
 

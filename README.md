@@ -2,10 +2,6 @@
 
 A WordPress plugin that adds a graphical text-editing popup to the [Etch](https://etchwp.com) builder — for both **Etch text elements** and **Gutenberg text** that lives in Etch as passthrough blocks.
 
-![Etch Text Editor popup](assets/popup.png)
-
-&nbsp;
-
 > Built on top of Etch's experimental Public API (`window.etch`). Etch marks this API as **experimental (0.x)**; breaking changes can occur between Etch releases.
 
 ## Why
@@ -23,11 +19,13 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
 - **Inline formatting toolbar**: bold (`strong`), italic (`em`), strikethrough (`s`), superscript, subscript, font-weight, text color, links, clear formatting.
 - **Color via theme tokens**: pick ACSS / CSS custom-property color tokens (grouped by family) and apply them as `color: var(--token)`.
 - **Links**: type a URL or search internal pages, posts and media (WordPress REST API). Placing the caret inside an existing link opens it for editing with the current URL prefilled; removing a link works from the caret too.
+- **Extended link options**: edit link title, target and `rel`; links opening in a new tab automatically get `noopener`.
 - **Insert menu (¶)**: line break, soft hyphen (`&shy;`) and non-breaking space (`&nbsp;`) at the caret.
 - **Paste as plain text**: pasted content from Word/Pages/websites is stripped of all formatting.
 - **Clean markup**: multiple inline styles on the same selection are merged into a single `<span>`; empty leftovers are removed; literal `<br>` becomes a real line break.
 - **Resizable, draggable popup**: drag the header to move it, the bottom-right corner to resize; it opens next to the text you're editing.
 - **Auto-save**: closing saves — via the X, the Close button or a click outside (also `Cmd/Ctrl+Enter`). Discarding is explicit: the **Discard** button or `Esc`.
+- **Undo/redo and save safety**: undo or redo local edits with the toolbar or keyboard shortcuts; external changes are detected before overwriting and save errors leave the editor open for retry.
 - **Sync-safe**: Gutenberg blocks stay core blocks, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
 
 ## How it works
@@ -50,9 +48,12 @@ If you use a page cache (e.g. LiteSpeed), purge it after updating so the builder
 - Select a text block in the builder → click **✎ Edit** (appears next to the text), or click a `GB` canvas preview. A second click on **✎ Edit** closes the popup again.
 - Select some text and format it via the toolbar. Buttons with a caret (▾) open a dropdown — font weight, color tokens (**var**) and the insert menu (**¶**).
 - For color, use the native picker or **var** to pick a theme token.
-- For links, type a URL or a search term to pick an internal page/post/media item. To change an existing link, place the caret inside it and open the link button — the current URL is prefilled.
+- For links, type a URL or a search term to pick an internal page/post/media item. To change an existing link, place the caret inside it and open the link button — the current URL is prefilled. Use **Options** for title, target and `rel`.
+- Use **Cancel** in the link row (or press `Esc`) to leave link editing without closing the popup.
 - Pasting always inserts plain text; format it afterwards with the toolbar.
+- Use the undo/redo buttons or `Cmd/Ctrl+Z` and `Cmd/Ctrl+Shift+Z` (`Ctrl+Y`) to move through local changes.
 - **Saving**: click outside the popup, use the **Close** button or the X, or press `Cmd/Ctrl+Enter`. **Discarding**: the **Discard** button or `Esc`.
+- When the text changed elsewhere while the popup was open, choose **Reload latest** or **Keep mine** before saving.
 
 ## Known limitations
 

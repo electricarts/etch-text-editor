@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v0.21.7
+ * Etch Text Editor v0.22.3
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "0.21.7";
+	const VERSION = "0.22.3";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -1748,11 +1748,35 @@
 						<div class="eppe-char-results"></div>
 					</div>
 					<button class="eppe-btn eppe-clear" title="Clear formatting">T&#8339;</button>
+					<button class="eppe-btn eppe-history" data-history="undo" title="Undo (Cmd/Ctrl+Z)" aria-label="Undo" disabled>&#8617;</button>
+					<button class="eppe-btn eppe-history" data-history="redo" title="Redo (Cmd/Ctrl+Shift+Z)" aria-label="Redo" disabled>&#8618;</button>
 				</div>
 				<div class="eppe-linkrow" style="position:relative;">
-					<input type="text" placeholder="https://… or search pages, posts &amp; media" autocomplete="off" />
-					<button class="eppe-btn eppe-linkset">Apply</button>
+					<div class="eppe-link-primary">
+						<input class="eppe-link-url" type="text" placeholder="https://… or search pages, posts &amp; media" autocomplete="off" aria-label="Link URL" />
+						<button class="eppe-btn eppe-linkoptions" type="button" aria-expanded="false" aria-controls="eppe-link-options">Options</button>
+						<div class="eppe-link-actions">
+							<button class="eppe-btn eppe-linkset">Apply</button>
+							<button class="eppe-btn eppe-linkcancel" type="button">Cancel</button>
+						</div>
+					</div>
+					<div class="eppe-link-options" id="eppe-link-options" hidden>
+						<input class="eppe-link-title" type="text" placeholder="Title (optional)" autocomplete="off" aria-label="Link title" />
+						<select class="eppe-link-target" aria-label="Link target">
+							<option value="">Default tab</option>
+							<option value="_self">Same tab</option>
+							<option value="_blank">New tab</option>
+							<option value="_parent">Parent frame</option>
+							<option value="_top">Top frame</option>
+						</select>
+						<input class="eppe-link-rel" type="text" placeholder="rel (optional)" autocomplete="off" aria-label="Link relationship" />
+					</div>
 					<div class="eppe-tb-results"></div>
+				</div>
+				<div class="eppe-conflict" role="alert" hidden>
+					<span class="eppe-conflict-message">This text changed outside the editor.</span>
+					<button class="eppe-btn eppe-conflict-reload">Reload latest</button>
+					<button class="eppe-btn eppe-conflict-overwrite">Keep mine</button>
 				</div>
 				<div class="eppe-editor" contenteditable="true" spellcheck="true"></div>
 				<div class="eppe-foot">
@@ -1767,8 +1791,23 @@
 			const editor = $(".eppe-editor");
 			const status = $(".eppe-status");
 			const linkRow = $(".eppe-linkrow");
-			const linkInput = linkRow.querySelector("input");
-			const st = { mode: null, blockId: null, passthroughId: null, path: null, savedRange: null, originalHtml: "", saving: false, mirrorEl: null, mirrorOriginal: null };
+			const linkInput = linkRow.querySelector(".eppe-link-url");
+			const linkOptionsBtn = linkRow.querySelector(".eppe-linkoptions");
+			const linkOptions = linkRow.querySelector(".eppe-link-options");
+			const linkTitleInput = linkRow.querySelector(".eppe-link-title");
+			const linkTargetSelect = linkRow.querySelector(".eppe-link-target");
+			const linkRelInput = linkRow.querySelector(".eppe-link-rel");
+			const conflictRow = $(".eppe-conflict");
+			const conflictReload = $(".eppe-conflict-reload");
+			const conflictOverwrite = $(".eppe-conflict-overwrite");
+			const linkCancel = $(".eppe-linkcancel");
+			const st = {
+				mode: null, blockId: null, passthroughId: null, path: null,
+				savedRange: null, originalHtml: "", saving: false,
+				mirrorEl: null, mirrorOriginal: null, editingLink: null,
+				history: [], historyIndex: -1, historyTimer: null,
+				historyRestoring: false, conflict: false,
+			};
 
 			/* Live preview: mirror the popup content into the canvas node (visual only) */
 			function liveMirror() {
@@ -1786,6 +1825,127 @@
 				status.textContent = msg;
 				status.className = "eppe-status" + (cls ? " " + cls : "");
 			};
+
+			function comparableHtml(html) {
+				const probe = document.createElement("div");
+				probe.innerHTML = html || "";
+				return probe.innerHTML;
+			}
+
+			function persistedEditorHtml() {
+				try {
+					if (st.mode === "gb") {
+						const fresh = etch.blocks.getJson(st.blockId);
+						const outer = parseOuter(fresh.gutenbergBlock.innerHTML);
+						return outer ? outer.innerHTML : "";
+					}
+					if (st.mode === "gbnested") {
+						const fresh = etch.blocks.getJson(st.passthroughId);
+						const target = nestedBlockAt(fresh.gutenbergBlock, st.path);
+						const outer = target && parseOuter(target.innerHTML);
+						return outer ? outer.innerHTML : "";
+					}
+					if (st.mode === "etch") {
+						const fresh = etch.blocks.getJson(st.blockId);
+						return childrenToHtml(fresh.children) || "";
+					}
+				} catch (_) { /* the block may be mid-replacement */ }
+				return null;
+			}
+
+			function hasExternalChange() {
+				const current = persistedEditorHtml();
+				return current !== null && comparableHtml(current) !== comparableHtml(st.originalHtml);
+			}
+
+			function updateHistoryButtons() {
+				const undo = panel.querySelector('[data-history="undo"]');
+				const redo = panel.querySelector('[data-history="redo"]');
+				if (undo) undo.disabled = st.historyIndex <= 0;
+				if (redo) redo.disabled = st.historyIndex < 0 || st.historyIndex >= st.history.length - 1;
+			}
+
+			function resetHistory() {
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.history = [editor.innerHTML];
+				st.historyIndex = 0;
+				updateHistoryButtons();
+			}
+
+			function recordHistory(immediate) {
+				if (st.historyRestoring || !st.mode || (st.selMark && st.selMark.isConnected)) return;
+				if (!immediate) {
+					clearTimeout(st.historyTimer);
+					st.historyTimer = setTimeout(() => recordHistory(true), 350);
+					return;
+				}
+				st.historyTimer = null;
+				const html = editor.innerHTML;
+				if (st.history[st.historyIndex] === html) {
+					updateHistoryButtons();
+					return;
+				}
+				st.history = st.history.slice(0, st.historyIndex + 1);
+				st.history.push(html);
+				if (st.history.length > 80) st.history.shift();
+				st.historyIndex = st.history.length - 1;
+				updateHistoryButtons();
+			}
+
+			function applyHistory(index, label) {
+				if (index < 0 || index >= st.history.length || index === st.historyIndex) return;
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.historyRestoring = true;
+				unmarkSelection(false);
+				st.historyIndex = index;
+				editor.innerHTML = st.history[index];
+				st.historyRestoring = false;
+				updateHistoryButtons();
+				editor.focus();
+				saveRange();
+				liveMirror();
+				setStatus(label + ".");
+			}
+
+			function undo() {
+				if (st.historyTimer) recordHistory(true);
+				applyHistory(st.historyIndex - 1, "Undid last change");
+			}
+
+			function redo() {
+				if (st.historyTimer) recordHistory(true);
+				applyHistory(st.historyIndex + 1, "Redid change");
+			}
+
+			function showConflict() {
+				st.conflict = true;
+				conflictRow.hidden = false;
+				setStatus("Conflict: text changed outside the editor.", "error");
+			}
+
+			function hideConflict() {
+				st.conflict = false;
+				conflictRow.hidden = true;
+			}
+
+			function reloadLatest() {
+				const latest = persistedEditorHtml();
+				if (latest === null) {
+					setStatus("Could not reload the latest text.", "error");
+					return;
+				}
+				unmarkSelection(false);
+				editor.innerHTML = latest;
+				st.originalHtml = editor.innerHTML;
+				resetHistory();
+				hideConflict();
+				liveMirror();
+				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
+				editor.focus();
+				setStatus("Latest text reloaded.");
+			}
 
 			/* Popup nah am zu bearbeitenden Text platzieren (statt unten rechts) */
 			function positionPopup(node) {
@@ -1809,6 +1969,10 @@
 			}
 
 			function open(target) {
+				/* A selection marker can still exist when the selected block changes
+				   while the popup is open. Remove it before replacing the editor DOM. */
+				unmarkSelection(false);
+				st.savedRange = null;
 				st.mode = target.mode;
 				st.blockId = target.block ? target.block.id : null;
 				st.passthroughId = null;
@@ -1837,9 +2001,17 @@
 				}
 				setStatus("Ready");
 				linkRow.style.display = "none";
+				setLinkOptionsOpen(false);
+				conflictRow.hidden = true;
 				panel.style.display = "flex";
 				st.originalHtml = editor.innerHTML;
 				st.editingLink = null;
+				st.conflict = false;
+				resetHistory();
+				linkInput.value = "";
+				linkTitleInput.value = "";
+				linkTargetSelect.value = "";
+				linkRelInput.value = "";
 				/* Remember the canvas node for live preview */
 				st.mirrorEl = target.mirrorEl || null;
 				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
@@ -1860,6 +2032,13 @@
 				st.path = null;
 				st.originalHtml = "";
 				st.editingLink = null;
+				st.savedRange = null;
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.history = [];
+				st.historyIndex = -1;
+				st.conflict = false;
+				conflictRow.hidden = true;
 				st.mirrorEl = null;
 				st.mirrorOriginal = null;
 				activeMirrorEl = null;
@@ -1870,13 +2049,27 @@
 			});
 			/* Closing (X, Close button, click outside) SAVES changes;
 			   discarding is the explicit "Discard" button or Esc. */
-			$(".eppe-close").addEventListener("mousedown", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				saveOrClose();
-			});
-			$(".eppe-closebtn").addEventListener("click", () => saveOrClose());
-			$(".eppe-cancel").addEventListener("click", () => close(true));
+				$(".eppe-close").addEventListener("mousedown", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					saveOrClose();
+				});
+				$(".eppe-closebtn").addEventListener("click", () => saveOrClose());
+				$(".eppe-cancel").addEventListener("click", () => close(true));
+				panel.querySelectorAll("[data-history]").forEach((btn) => {
+					btn.addEventListener("mousedown", (e) => e.preventDefault());
+					btn.addEventListener("click", () => {
+						if (btn.dataset.history === "undo") undo();
+						else redo();
+					});
+				});
+				conflictReload.addEventListener("mousedown", (e) => e.preventDefault());
+				conflictReload.addEventListener("click", reloadLatest);
+				conflictOverwrite.addEventListener("mousedown", (e) => e.preventDefault());
+				conflictOverwrite.addEventListener("click", () => {
+					hideConflict();
+					doSave(true);
+				});
 
 			/* Auto-save on click outside the popup (top window + canvas) */
 			const onOutsideDown = (e) => {
@@ -1989,10 +2182,17 @@
 
 			editor.addEventListener("keyup", saveRange);
 			editor.addEventListener("mouseup", saveRange);
+			editor.addEventListener("input", () => {
+				recordHistory(false);
+				if (!st.saving && !st.conflict && editor.innerHTML !== st.originalHtml) {
+					setStatus("Unsaved changes.");
+				}
+			});
 			/* Paste always as plain text (strip Word/Pages formatting) */
 			editor.addEventListener("paste", (e) => {
 				handlePlainPaste(e, document);
 				saveRange();
+				recordHistory(false);
 			});
 
 			panel.querySelectorAll("[data-cmd]").forEach((btn) => {
@@ -2005,15 +2205,17 @@
 						const a = linkAtSelection();
 						if (a && (!st.savedRange || st.savedRange.collapsed)) {
 							while (a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
-							a.remove();
-							editor.normalize();
-							saveRange();
-							setStatus("Link removed.");
-							return;
+								a.remove();
+								editor.normalize();
+								saveRange();
+								recordHistory(true);
+								setStatus("Link removed.");
+								return;
 						}
 					}
 					document.execCommand(btn.dataset.cmd, false, null);
 					saveRange();
+					recordHistory(true);
 				});
 			});
 
@@ -2058,6 +2260,7 @@
 				coalesceSpans(editor); // combine font-weight + color into ONE span
 				editor.normalize();
 				saveRange();
+				recordHistory(true);
 				setStatus(label + " applied.");
 			};
 
@@ -2120,10 +2323,11 @@
 						if (!restoreRange()) editor.focus();
 						if (k === "br") document.execCommand("insertHTML", false, "<br>");
 						else if (k === "shy") document.execCommand("insertText", false, "\u00AD");
-						else document.execCommand("insertText", false, "\u00A0");
-						charResults.className = "eppe-char-results";
-						saveRange();
-						setStatus(k === "br" ? "Line break inserted." : k === "shy" ? "Soft hyphen inserted." : "Non-breaking space inserted.");
+							else document.execCommand("insertText", false, "\u00A0");
+							charResults.className = "eppe-char-results";
+							saveRange();
+							recordHistory(true);
+							setStatus(k === "br" ? "Line break inserted." : k === "shy" ? "Soft hyphen inserted." : "Non-breaking space inserted.");
 					});
 				});
 			});
@@ -2254,12 +2458,56 @@
 			const linkAtSelection = () => {
 				const r = st.savedRange;
 				if (!r) return null;
-				let n = r.commonAncestorContainer;
-				if (n && n.nodeType === 3) n = n.parentNode;
-				const a = n && n.closest ? n.closest("a") : null;
-				return a && editor.contains(a) ? a : null;
+				const findLink = (node) => {
+					let n = node && node.nodeType === 3 ? node.parentNode : node;
+					while (n && n !== editor) {
+						if (n.nodeType === 1 && n.tagName === "A") return n;
+						n = n.parentNode;
+					}
+					return null;
+				};
+				const start = findLink(r.startContainer);
+				const end = findLink(r.endContainer);
+				if (start && start === end) return start;
+				return findLink(r.commonAncestorContainer);
 			};
 
+			const applyLinkAttributes = (a) => {
+				if (!a) return;
+				const title = linkTitleInput.value.trim();
+				const target = linkTargetSelect.value;
+				const rel = linkRelInput.value.trim().split(/\s+/).filter(Boolean);
+				if (target === "_blank" && !rel.includes("noopener")) rel.push("noopener");
+				if (title) a.setAttribute("title", title);
+				else a.removeAttribute("title");
+				if (target) a.setAttribute("target", target);
+				else a.removeAttribute("target");
+				if (rel.length) a.setAttribute("rel", [...new Set(rel)].join(" "));
+				else a.removeAttribute("rel");
+			};
+
+			const setLinkOptionsOpen = (open) => {
+				linkOptions.hidden = !open;
+				linkOptionsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+				linkOptionsBtn.classList.toggle("open", open);
+			};
+
+			const closeLinkEditor = (restoreSelection) => {
+				linkRow.style.display = "none";
+				renderResults(null);
+				setLinkOptionsOpen(false);
+				st.editingLink = null;
+				if (restoreSelection) {
+					const hadMarker = st.selMark && st.selMark.isConnected;
+					unmarkSelection(true);
+					if (!hadMarker) restoreRange();
+				}
+			};
+
+			linkOptionsBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			linkOptionsBtn.addEventListener("click", () => {
+				setLinkOptionsOpen(linkOptions.hidden);
+			});
 			$(".eppe-linkbtn").addEventListener("mousedown", (e) => e.preventDefault());
 			$(".eppe-linkbtn").addEventListener("click", () => {
 				saveRange();
@@ -2273,6 +2521,10 @@
 				linkRow.style.display = "flex";
 				if (!a) markSelection();
 				linkInput.value = a ? (a.getAttribute("href") || "") : "";
+				linkTitleInput.value = a ? (a.getAttribute("title") || "") : "";
+				linkTargetSelect.value = a ? (a.getAttribute("target") || "") : "";
+				linkRelInput.value = a ? (a.getAttribute("rel") || "") : "";
+				setLinkOptionsOpen(Boolean(a && (linkTitleInput.value || linkTargetSelect.value || linkRelInput.value)));
 				renderResults(null);
 				linkInput.focus();
 				if (linkInput.value) linkInput.select();
@@ -2281,12 +2533,12 @@
 			const applyLink = () => {
 				const url = linkInput.value.trim();
 				if (!url) return;
-				/* Editing an existing link: just update its href */
+				/* Editing an existing link: update href and optional attributes */
 				if (st.editingLink && st.editingLink.isConnected) {
 					st.editingLink.setAttribute("href", url);
-					st.editingLink = null;
-					linkRow.style.display = "none";
-					renderResults(null);
+					applyLinkAttributes(st.editingLink);
+					closeLinkEditor(false);
+					recordHistory(true);
 					setStatus("Link updated: " + url);
 					editor.focus();
 					saveRange();
@@ -2297,12 +2549,15 @@
 				editor.focus();
 				restoreRange();
 				document.execCommand("createLink", false, url);
-				linkRow.style.display = "none";
-				renderResults(null);
-				setStatus("Link added: " + url);
 				saveRange();
+				applyLinkAttributes(linkAtSelection());
+				closeLinkEditor(false);
+				recordHistory(true);
+				setStatus("Link added: " + url);
 			};
 			$(".eppe-linkset").addEventListener("click", applyLink);
+			linkCancel.addEventListener("mousedown", (e) => e.preventDefault());
+			linkCancel.addEventListener("click", () => closeLinkEditor(true));
 			linkInput.addEventListener("input", () => doSearch(linkInput.value.trim()));
 			linkInput.addEventListener("keydown", (e) => {
 				const rows = Array.from(linkResults.querySelectorAll(".eppe-tb-result:not(.eppe-tb-empty)"));
@@ -2320,7 +2575,7 @@
 					applyLink();
 				} else if (e.key === "Escape") {
 					if (linkResults.classList.contains("open")) renderResults(null);
-					else linkRow.style.display = "none";
+					else closeLinkEditor(true);
 				}
 			});
 
@@ -2373,12 +2628,18 @@
 				stripEmptyInline(editor);
 				editor.normalize();
 				saveRange();
+				recordHistory(true);
 				setStatus("Formatting cleared.");
 			});
 
-			async function doSave() {
+			async function doSave(force) {
 				if (!st.mode || st.saving) return;
 				unmarkSelection(false);
+				if (!force && editor.innerHTML !== st.originalHtml && hasExternalChange()) {
+					showConflict();
+					return;
+				}
+				hideConflict();
 				st.saving = true;
 				setStatus("Saving…");
 				try {
@@ -2398,14 +2659,21 @@
 					refreshPreviewBurst(); // + zeitversetzt (Etch rendert asynchron)
 				} catch (e) {
 					err("Saving failed:", apiErrInfo(e));
-					setStatus("Error: " + apiErrInfo(e), "error");
+					setStatus("Save failed — use Close to retry. " + apiErrInfo(e), "error");
 					st.saving = false;
 				}
 			}
 
 			/* Cmd/Ctrl+Enter speichert, Esc verwirft */
 			editor.addEventListener("keydown", (e) => {
-				if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+				if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
+					e.preventDefault();
+					if (e.shiftKey) redo();
+					else undo();
+				} else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "y") {
+					e.preventDefault();
+					redo();
+				} else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 					e.preventDefault();
 					if (editor.innerHTML !== st.originalHtml) doSave(); else close(true);
 				} else if (e.key === "Escape") {
@@ -2548,7 +2816,7 @@
 		.eppe-launcher:hover { background: #6d28d9; }
 		.eppe-panel {
 			position: fixed; right: 20px; bottom: 64px; z-index: 1000000;
-			width: 560px; max-width: calc(100vw - 40px);
+			width: 640px; max-width: calc(100vw - 40px);
 			min-width: 420px; min-height: 260px;
 			background: #1e1e24; color: #e5e5ea; border: 1px solid #3a3a44;
 			border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
@@ -2584,6 +2852,8 @@
 			display: block; width: 19px; height: 19px; flex: none;
 		}
 		.eppe-btn:hover { background: #3a3a46; }
+		.eppe-history { font-size: 18px; font-weight: 400; line-height: 1; padding: 5px 8px; }
+		.eppe-history:disabled, .eppe-history:disabled:hover { opacity: .35; cursor: default; background: #2a2a32; }
 		.eppe-btn.eppe-i { font-style: italic; font-weight: 400; }
 		.eppe-select {
 			background: #2a2a32; color: #e5e5ea; border: 1px solid #3a3a44;
@@ -2657,11 +2927,32 @@
 		   is open (the editor loses focus, so the native selection is hidden).
 		   Must come after the inline reset above, which forces a transparent bg. */
 		.eppe-editor span.eppe-selhl { background: rgba(124,58,237,.55) !important; border-radius: 2px; }
-		.eppe-linkrow { display: none; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #3a3a44; }
-		.eppe-linkrow input {
-			flex: 1; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
+		.eppe-linkrow { display: none; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #3a3a44; }
+		.eppe-link-primary {
+			display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+			gap: 6px; align-items: center;
+		}
+		.eppe-link-options {
+			display: grid; grid-template-columns: minmax(140px, 1.2fr) 110px minmax(120px, 1fr);
+			gap: 6px; align-items: center;
+		}
+		.eppe-link-options[hidden] { display: none; }
+		.eppe-linkrow input, .eppe-linkrow select {
+			min-width: 0; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
 			border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none;
 		}
+		.eppe-linkoptions[aria-expanded="true"] { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+		.eppe-link-actions { display: flex; gap: 6px; }
+		.eppe-link-actions .eppe-btn { flex: 1; }
+		.eppe-linkrow select { cursor: pointer; }
+		.eppe-conflict {
+			display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+			padding: 8px 12px; border-bottom: 1px solid #3a3a44;
+			background: #332817; color: #fbbf24;
+		}
+		.eppe-conflict[hidden] { display: none !important; }
+		.eppe-conflict-message { flex: 1 1 220px; font-size: 11px; }
+		.eppe-conflict .eppe-btn { padding: 4px 8px; font-size: 11px; }
 		.eppe-linkrow .eppe-tb-results {
 			display: none; position: absolute; left: 12px; right: 12px; top: 100%; margin-top: 3px;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 6px;
@@ -2693,6 +2984,13 @@
 			border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer;
 		}
 		.eppe-cancel:hover { color: #fff; }
+		@media (max-width: 720px) {
+			.eppe-panel {
+				width: calc(100vw - 20px); max-width: calc(100vw - 20px);
+				min-width: 0; right: 10px;
+			}
+			.eppe-link-options { grid-template-columns: 1fr; }
+		}
 		`;
 		const style = document.createElement("style");
 		style.id = "eppe-styles";
