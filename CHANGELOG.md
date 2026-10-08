@@ -2,6 +2,18 @@
 
 All notable changes to this project.
 
+## 0.21.6
+- Changed: replaced the 3D emoji link/unlink buttons with flat, monochrome outline icons matching the rest of the toolbar.
+
+## 0.21.5
+- Fixed: the selection highlight is now actually visible — the inline CSS reset was overriding its background, and the color token dropdown was missing the highlight call.
+
+## 0.21.4
+- Fixed: the selection highlight now also appears for the color token ("var") dropdown.
+
+## 0.21.3
+- The text selection now stays visible while a dropdown (font weight, color tokens, insert menu, link) is open — it is highlighted instead of disappearing when the editor loses focus.
+
 ## 0.21.2
 - Dropdown buttons (font weight, color tokens, insert menu) now show a caret indicator; while open they are highlighted and the caret flips.
 

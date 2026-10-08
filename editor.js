@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v0.21.2
+ * Etch Text Editor v0.21.6
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "0.21.2";
+	const VERSION = "0.21.6";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -31,6 +31,21 @@
 		"core/preformatted": "Preformatted",
 		"core/verse": "Verse",
 	};
+
+	/* Flat, monochrome toolbar icons (kept inline so the editor has no icon dependency). */
+	const LINK_ICON_SVG =
+		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+		`<path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/>` +
+		`<path d="M14 11a5 5 0 0 0-7.07 0l-2.12 2.12a5 5 0 0 0 7.07 7.07L13 19.07"/>` +
+		`</svg>`;
+	const UNLINK_ICON_SVG =
+		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+		`<path d="M10 13a5 5 0 0 0 7.07 0l2.12-2.12a5 5 0 0 0-7.07-7.07L11 4.93"/>` +
+		`<path d="M14 11a5 5 0 0 0-7.07 0l-2.12 2.12a5 5 0 0 0 7.07 7.07L13 19.07"/>` +
+		`<path d="m2 2 20 20"/>` +
+		`</svg>`;
 
 	const ETCH_TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption"];
 	const INLINE_TAGS = ["a", "strong", "em", "span", "br", "code", "mark", "s", "sub", "sup", "u"];
@@ -406,6 +421,11 @@
 				}
 			});
 		};
+		/* remove the temporary selection highlight wrapper, if present */
+		rootEl.querySelectorAll(".eppe-selhl").forEach((n) => {
+			while (n.firstChild) n.parentNode.insertBefore(n.firstChild, n);
+			n.remove();
+		});
 		walk(rootEl);
 		coalesceSpans(rootEl);   // merge nested spans into one
 		stripEmptyInline(rootEl); // remove empty leftovers (e.g. after removeFormat)
@@ -693,6 +713,13 @@
 			font: 600 12px/1 system-ui, sans-serif; min-width: 26px;
 			pointer-events: auto;
 		}
+		.eppe-tb .eppe-icon-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 34px; min-width: 34px; height: 26px; padding: 3px 6px;
+		}
+		.eppe-tb .eppe-icon {
+			display: block; width: 18px; height: 18px; flex: none;
+		}
 		.eppe-tb button:hover { background: #3a3a46; }
 		.eppe-tb .eppe-tb-i { font-style: italic; font-weight: 400; }
 		.eppe-tb .eppe-tb-color {
@@ -813,8 +840,8 @@
 					<option value="700">700</option><option value="800">800</option>
 				</select>
 				<label class="eppe-tb-color" title="Text color">A<input type="color" value="#000000" /></label>
-				<button class="eppe-tb-link" title="Add link">&#128279;</button>
-				<button data-cmd="unlink" title="Remove link">&#128279;&#10060;</button>
+				<button class="eppe-tb-link eppe-icon-btn" title="Add link" aria-label="Add link">${LINK_ICON_SVG}</button>
+				<button class="eppe-icon-btn" data-cmd="unlink" title="Remove link" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
 				<button class="eppe-tb-clear" title="Clear formatting">T&#8339;</button>
 				<span class="eppe-tb-sep"></span>
 				<button class="eppe-tb-cancel" title="Discard (Esc) – clicking outside saves automatically">&#10005;</button>
@@ -1715,8 +1742,8 @@
 						<button class="eppe-btn eppe-varbtn eppe-hasmenu" title="Theme color variable">var<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-var-results"></div>
 					</div>
-					<button class="eppe-btn eppe-linkbtn" title="Add / edit link">&#128279;</button>
-					<button class="eppe-btn" data-cmd="unlink" title="Remove link">&#128279;&#10060;</button>
+					<button class="eppe-btn eppe-linkbtn eppe-icon-btn" title="Add / edit link" aria-label="Add / edit link">${LINK_ICON_SVG}</button>
+					<button class="eppe-btn eppe-icon-btn" data-cmd="unlink" title="Remove link" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
 						<button class="eppe-btn eppe-charbtn eppe-hasmenu" title="Insert: line break, soft hyphen, non-breaking space">&para;<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-char-results"></div>
@@ -1822,6 +1849,7 @@
 				editor.focus();
 			}
 			function close(discard) {
+				unmarkSelection(false);
 				/* On discard, reset the live preview in the canvas */
 				if (discard && st.mirrorEl && st.mirrorOriginal != null) {
 					try { if (st.mirrorEl.isConnected) st.mirrorEl.innerHTML = st.mirrorOriginal; } catch (_) { /* ignore */ }
@@ -1915,6 +1943,51 @@
 				sel.addRange(st.savedRange);
 				return true;
 			};
+
+			/* While a dropdown is open the editor loses focus and the browser
+			   hides the selection. Wrap it in a temporary highlight span so the
+			   user still sees what they are about to format. */
+			function markSelection() {
+				if (st.selMark && st.selMark.isConnected) return;
+				if (!st.savedRange || st.savedRange.collapsed) return;
+				const span = document.createElement("span");
+				span.className = "eppe-selhl";
+				const r = st.savedRange.cloneRange();
+				try {
+					r.surroundContents(span);
+				} catch (_) {
+					try {
+						span.appendChild(r.extractContents());
+						r.insertNode(span);
+					} catch (__) { return; }
+				}
+				st.selMark = span;
+			}
+
+			function unmarkSelection(restore) {
+				const span = st.selMark;
+				st.selMark = null;
+				if (!span || !span.isConnected) return;
+				const parent = span.parentNode;
+				const first = span.firstChild;
+				const last = span.lastChild;
+				while (span.firstChild) parent.insertBefore(span.firstChild, span);
+				span.remove();
+				if (first && last) {
+					try {
+						const r = document.createRange();
+						r.setStartBefore(first);
+						r.setEndAfter(last);
+						st.savedRange = r;
+						if (restore) {
+							const sel = window.getSelection();
+							sel.removeAllRanges();
+							sel.addRange(r);
+						}
+					} catch (_) { /* keep previous range */ }
+				}
+			}
+
 			editor.addEventListener("keyup", saveRange);
 			editor.addEventListener("mouseup", saveRange);
 			/* Paste always as plain text (strip Word/Pages formatting) */
@@ -1998,7 +2071,7 @@
 			];
 			wtBtn.addEventListener("mousedown", (e) => e.preventDefault());
 			wtBtn.addEventListener("click", () => {
-				if (wtResults.classList.contains("open")) { wtResults.className = "eppe-wt-results"; return; }
+				if (wtResults.classList.contains("open")) { wtResults.className = "eppe-wt-results"; unmarkSelection(true); return; }
 				saveRange();
 				if (!st.savedRange || st.savedRange.collapsed) {
 					setStatus("Please select the text here in the editing field.", "error");
@@ -2009,10 +2082,12 @@
 					`<span class="eppe-var-name" style="font-weight:${v}">${l} · ${v}</span></div>`
 				).join("");
 				wtResults.className = "eppe-wt-results open";
+				markSelection();
 				wtResults.querySelectorAll(".eppe-var-row").forEach((row) => {
 					row.addEventListener("mousedown", (e) => {
 						e.preventDefault();
 						const v = row.getAttribute("data-wt");
+						unmarkSelection(true);
 						applyPopupSpanStyle("fontWeight", v, "font-weight " + v);
 						wtResults.className = "eppe-wt-results";
 					});
@@ -2029,7 +2104,7 @@
 			];
 			charBtn.addEventListener("mousedown", (e) => e.preventDefault());
 			charBtn.addEventListener("click", () => {
-				if (charResults.classList.contains("open")) { charResults.className = "eppe-char-results"; return; }
+				if (charResults.classList.contains("open")) { charResults.className = "eppe-char-results"; unmarkSelection(true); return; }
 				saveRange();
 				charResults.innerHTML = CHAR_ITEMS.map(([k, label, hint]) =>
 					`<div class="eppe-var-row" data-char="${k}">` +
@@ -2037,9 +2112,11 @@
 					`<span class="eppe-char-hint">${hint}</span></div>`
 				).join("");
 				charResults.className = "eppe-char-results open";
+				markSelection();
 				charResults.querySelectorAll(".eppe-var-row").forEach((row) => {
 					row.addEventListener("mousedown", (e) => {
 						e.preventDefault();
+						unmarkSelection(true);
 						const k = row.getAttribute("data-char");
 						if (!restoreRange()) editor.focus();
 						if (k === "br") document.execCommand("insertHTML", false, "<br>");
@@ -2116,6 +2193,7 @@
 					row.addEventListener("mousedown", (e) => {
 						e.preventDefault();
 						const name = row.getAttribute("data-var");
+						unmarkSelection(true);
 						applyPopupSpanStyle("color", "var(" + name + ")", "Color " + name);
 						varResults.className = "eppe-var-results";
 					});
@@ -2125,12 +2203,13 @@
 
 			varBtn.addEventListener("mousedown", (e) => e.preventDefault());
 			varBtn.addEventListener("click", () => {
-				if (varResults.classList.contains("open")) { varResults.className = "eppe-var-results"; return; }
+				if (varResults.classList.contains("open")) { varResults.className = "eppe-var-results"; unmarkSelection(true); return; }
 				saveRange(); // save the selection before opening
 				if (!st.savedRange || st.savedRange.collapsed) {
 					setStatus("Please select the text here in the editing field.", "error");
 					return;
 				}
+				markSelection();
 				renderTokens("");
 			});
 
@@ -2193,6 +2272,7 @@
 				}
 				st.editingLink = a || null;
 				linkRow.style.display = "flex";
+				if (!a) markSelection();
 				linkInput.value = a ? (a.getAttribute("href") || "") : "";
 				renderResults(null);
 				linkInput.focus();
@@ -2213,6 +2293,7 @@
 					saveRange();
 					return;
 				}
+				unmarkSelection(true);
 				if (!restoreRange()) { setStatus("Selection lost – please select the text again.", "error"); return; }
 				editor.focus();
 				restoreRange();
@@ -2259,14 +2340,17 @@
 				if (wtResults.classList.contains("open") &&
 					!t.closest(".eppe-wt-results") && !t.closest(".eppe-wtbtn")) {
 					wtResults.className = "eppe-wt-results";
+					unmarkSelection(false);
 				}
 				if (charResults.classList.contains("open") &&
 					!t.closest(".eppe-char-results") && !t.closest(".eppe-charbtn")) {
 					charResults.className = "eppe-char-results";
+					unmarkSelection(false);
 				}
 				if (varResults.classList.contains("open") &&
 					!t.closest(".eppe-var-results") && !t.closest(".eppe-varbtn")) {
 					varResults.className = "eppe-var-results";
+					unmarkSelection(false);
 				}
 				if (linkResults.classList.contains("open") &&
 					!t.closest(".eppe-tb-results") && !t.closest(".eppe-linkrow")) {
@@ -2295,6 +2379,7 @@
 
 			async function doSave() {
 				if (!st.mode || st.saving) return;
+				unmarkSelection(false);
 				st.saving = true;
 				setStatus("Saving…");
 				try {
@@ -2492,6 +2577,13 @@
 			border-radius: 6px; padding: 5px 10px; cursor: pointer;
 			font: 600 12px/1 system-ui, sans-serif; min-width: 30px;
 		}
+		.eppe-btn.eppe-icon-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 42px; min-width: 42px; height: 30px; padding: 5px 8px;
+		}
+		.eppe-btn .eppe-icon {
+			display: block; width: 19px; height: 19px; flex: none;
+		}
 		.eppe-btn:hover { background: #3a3a46; }
 		.eppe-btn.eppe-i { font-style: italic; font-weight: 400; }
 		.eppe-select {
@@ -2562,6 +2654,10 @@
 		}
 		.eppe-editor a { color: #a78bfa !important; text-decoration: underline !important; }
 		.eppe-editor a::before, .eppe-editor a::after { content: none !important; }
+		/* Temporary highlight so the selection stays visible while a dropdown
+		   is open (the editor loses focus, so the native selection is hidden).
+		   Must come after the inline reset above, which forces a transparent bg. */
+		.eppe-editor span.eppe-selhl { background: rgba(124,58,237,.55) !important; border-radius: 2px; }
 		.eppe-linkrow { display: none; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #3a3a44; }
 		.eppe-linkrow input {
 			flex: 1; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
