@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 1.0.2
+- Changed: replaced the README screenshot with the updated interface screenshot.
+
 ## 1.0.1
 - Fixed: all popup toolbar buttons now use the same height and vertical alignment.
 

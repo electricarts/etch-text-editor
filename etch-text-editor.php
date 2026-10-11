@@ -2,7 +2,7 @@
 /**
  * Plugin Name:       Etch Text Editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. The native two-way sync is preserved because Gutenberg blocks remain core blocks.
- * Version:           1.0.1
+ * Version:           1.0.2
  * Author:            Mario Peischl
  * Requires at least: 6.0
  * Requires PHP:      7.4
@@ -25,7 +25,7 @@ function eppe_enqueue() {
 		'etch-text-editor',
 		plugin_dir_url( __FILE__ ) . 'editor.js',
 		array(),
-		'1.0.1',
+		'1.0.2',
 		true
 	);
 }
