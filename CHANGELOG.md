@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 1.0.1
+- Fixed: all popup toolbar buttons now use the same height and vertical alignment.
+
 ## 1.0.0
 - First stable release of Etch Text Editor.
 - Includes the complete popup editing workflow, inline formatting, ACSS/design-system color tokens, link editing, undo/redo, conflict-safe saving and explanatory toolbar tooltips.
