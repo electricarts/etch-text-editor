@@ -2,6 +2,20 @@
 
 All notable changes to this project.
 
+## 1.0.0
+- First stable release of Etch Text Editor.
+- Includes the complete popup editing workflow, inline formatting, ACSS/design-system color tokens, link editing, undo/redo, conflict-safe saving and explanatory toolbar tooltips.
+- Updated the README screenshot to show the current color-token workflow.
+
+## 0.22.6
+- Changed: the color-token tooltip now describes design-system tokens generally and gives ACSS as an example.
+
+## 0.22.5
+- Changed: the color-token tooltip now refers explicitly to **ACSS** instead of a generic design-system token.
+
+## 0.22.4
+- New: toolbar buttons now show consistent explanatory tooltips on hover and keyboard focus.
+
 ## 0.22.3
 - Changed: link editing is now compact by default; URL, **Options**, **Apply** and **Cancel** stay visible, while title, target and `rel` appear on demand. The default popup width is reduced to 640px.
 

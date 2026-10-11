@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v0.22.3
+ * Etch Text Editor v1.0.0
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "0.22.3";
+	const VERSION = "1.0.0";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -611,7 +611,7 @@
 			return;
 		}
 		window.__eppeActive = VERSION;
-		document.querySelectorAll(".eppe-panel, .eppe-launcher, #eppe-styles").forEach((n) => n.remove());
+		document.querySelectorAll(".eppe-panel, .eppe-launcher, .eppe-tooltip, #eppe-styles").forEach((n) => n.remove());
 
 		injectTopStyles();
 
@@ -1727,29 +1727,29 @@
 					<button class="eppe-close" title="Close">&times;</button>
 				</div>
 				<div class="eppe-toolbar">
-					<button class="eppe-btn" data-cmd="bold" title="Bold (strong)">B</button>
-					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic (em)">I</button>
-					<button class="eppe-btn" data-cmd="strikeThrough" title="Strikethrough" style="text-decoration:line-through;">S</button>
-					<button class="eppe-btn" data-cmd="superscript" title="Superscript">x&sup2;</button>
-					<button class="eppe-btn" data-cmd="subscript" title="Subscript">x&#8322;</button>
+					<button class="eppe-btn" data-cmd="bold" title="Bold — make selected text bold">B</button>
+					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic — slant selected text">I</button>
+					<button class="eppe-btn" data-cmd="strikeThrough" title="Strikethrough — cross out selected text" style="text-decoration:line-through;">S</button>
+					<button class="eppe-btn" data-cmd="superscript" title="Superscript — raise selected text">x&sup2;</button>
+					<button class="eppe-btn" data-cmd="subscript" title="Subscript — lower selected text">x&#8322;</button>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-wtbtn eppe-hasmenu" title="Font weight" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span><svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<button class="eppe-btn eppe-wtbtn eppe-hasmenu" title="Font weight — choose the weight of selected text" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span><svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-wt-results"></div>
 					</div>
-					<label class="eppe-btn eppe-colorlbl" title="Text color" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
+					<label class="eppe-btn eppe-colorlbl" title="Text color — choose a color for selected text" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" aria-label="Text color" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-varbtn eppe-hasmenu" title="Theme color variable">var<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<button class="eppe-btn eppe-varbtn eppe-hasmenu" title="Theme color — apply a design-system token (e.g. ACSS)">var<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-var-results"></div>
 					</div>
-					<button class="eppe-btn eppe-linkbtn eppe-icon-btn" title="Add / edit link" aria-label="Add / edit link">${LINK_ICON_SVG}</button>
-					<button class="eppe-btn eppe-icon-btn" data-cmd="unlink" title="Remove link" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
+					<button class="eppe-btn eppe-linkbtn eppe-icon-btn" title="Link — add or edit a link" aria-label="Add / edit link">${LINK_ICON_SVG}</button>
+					<button class="eppe-btn eppe-icon-btn" data-cmd="unlink" title="Remove link — remove the link from selected text" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-charbtn eppe-hasmenu" title="Insert: line break, soft hyphen, non-breaking space">&para;<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<button class="eppe-btn eppe-charbtn eppe-hasmenu" title="Insert — line break, soft hyphen or non-breaking space">&para;<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-char-results"></div>
 					</div>
-					<button class="eppe-btn eppe-clear" title="Clear formatting">T&#8339;</button>
-					<button class="eppe-btn eppe-history" data-history="undo" title="Undo (Cmd/Ctrl+Z)" aria-label="Undo" disabled>&#8617;</button>
-					<button class="eppe-btn eppe-history" data-history="redo" title="Redo (Cmd/Ctrl+Shift+Z)" aria-label="Redo" disabled>&#8618;</button>
+					<button class="eppe-btn eppe-clear" title="Clear formatting — remove formatting from selected text">T&#8339;</button>
+					<button class="eppe-btn eppe-history" data-history="undo" title="Undo — revert the last change (Cmd/Ctrl+Z)" aria-label="Undo" disabled>&#8617;</button>
+					<button class="eppe-btn eppe-history" data-history="redo" title="Redo — repeat an undone change (Cmd/Ctrl+Shift+Z)" aria-label="Redo" disabled>&#8618;</button>
 				</div>
 				<div class="eppe-linkrow" style="position:relative;">
 					<div class="eppe-link-primary">
@@ -1786,6 +1786,55 @@
 				</div>
 			`;
 			document.body.appendChild(panel);
+
+			/* Replace browser-native title hints with consistent, readable toolbar tooltips. */
+			function installToolbarTooltips() {
+				const tooltip = document.createElement("div");
+				tooltip.className = "eppe-tooltip";
+				tooltip.setAttribute("role", "tooltip");
+				tooltip.hidden = true;
+				document.body.appendChild(tooltip);
+				let timer = null;
+				let active = null;
+
+				const hide = () => {
+					clearTimeout(timer);
+					timer = null;
+					active = null;
+					tooltip.hidden = true;
+					tooltip.classList.remove("open");
+				};
+				const show = (target) => {
+					if (active !== target) return;
+					tooltip.textContent = target.dataset.eppeTooltip || "";
+					tooltip.hidden = false;
+					tooltip.classList.add("open");
+					const r = target.getBoundingClientRect();
+					const tr = tooltip.getBoundingClientRect();
+					let top = r.bottom + 8;
+					if (top + tr.height > window.innerHeight - 8) top = r.top - tr.height - 8;
+					let left = r.left + (r.width - tr.width) / 2;
+					left = Math.max(8, Math.min(left, window.innerWidth - tr.width - 8));
+					tooltip.style.left = Math.round(left) + "px";
+					tooltip.style.top = Math.round(Math.max(8, top)) + "px";
+				};
+				const schedule = (target) => {
+					if (!target.dataset.eppeTooltip) return;
+					hide();
+					active = target;
+					timer = setTimeout(() => show(target), 360);
+				};
+
+				panel.querySelectorAll(".eppe-toolbar [title]").forEach((target) => {
+					target.dataset.eppeTooltip = target.getAttribute("title");
+					target.removeAttribute("title");
+					target.addEventListener("pointerenter", () => schedule(target));
+					target.addEventListener("pointerleave", hide);
+					target.addEventListener("focus", () => schedule(target));
+					target.addEventListener("blur", hide);
+				});
+			}
+			installToolbarTooltips();
 
 			const $ = (sel) => panel.querySelector(sel);
 			const editor = $(".eppe-editor");
@@ -2814,6 +2863,17 @@
 			cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35);
 		}
 		.eppe-launcher:hover { background: #6d28d9; }
+		.eppe-tooltip {
+			position: fixed; z-index: 2147483647; max-width: 250px;
+			padding: 7px 9px; background: #111116; color: #f4f4f6;
+			border: 1px solid #4a4a58; border-radius: 6px;
+			box-shadow: 0 5px 18px rgba(0,0,0,.5);
+			font: 11px/1.35 system-ui, sans-serif; text-align: center;
+			pointer-events: none; opacity: 0; transform: translateY(-2px);
+			transition: opacity .12s ease, transform .12s ease;
+		}
+		.eppe-tooltip[hidden] { display: none; }
+		.eppe-tooltip.open { opacity: 1; transform: translateY(0); }
 		.eppe-panel {
 			position: fixed; right: 20px; bottom: 64px; z-index: 1000000;
 			width: 640px; max-width: calc(100vw - 40px);

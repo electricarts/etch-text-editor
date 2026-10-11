@@ -28,6 +28,7 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
 - **Paste as plain text**: pasted content from Word/Pages/websites is stripped of all formatting.
 - **Clean markup**: multiple inline styles on the same selection are merged into a single `<span>`; empty leftovers are removed; literal `<br>` becomes a real line break.
 - **Resizable, draggable popup**: drag the header to move it, the bottom-right corner to resize; it opens next to the text you're editing.
+- **Toolbar tooltips**: hover over a toolbar button to see what it does; the same hints are available with keyboard focus.
 - **Auto-save**: closing saves — via the X, the Close button or a click outside (also `Cmd/Ctrl+Enter`). Discarding is explicit: the **Discard** button or `Esc`.
 - **Undo/redo and save safety**: undo or redo local edits with the toolbar or keyboard shortcuts; external changes are detected before overwriting and save errors leave the editor open for retry.
 - **Sync-safe**: Gutenberg blocks stay core blocks, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
