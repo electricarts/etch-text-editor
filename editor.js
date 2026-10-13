@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v1.0.2
+ * Etch Text Editor v1.0.3
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -19,7 +19,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "1.0.2";
+	const VERSION = "1.0.3";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;

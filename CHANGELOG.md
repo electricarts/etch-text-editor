@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 1.0.3
+- Added: WordPress plugin and author URLs to link “View Details” to GitHub and the author name to the author website.
+
 ## 1.0.2
 - Changed: replaced the README screenshot with the updated interface screenshot.
 
