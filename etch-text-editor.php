@@ -1,9 +1,11 @@
 <?php
 /**
  * Plugin Name:       Etch Text Editor
+ * Plugin URI:        https://github.com/electricarts/etch-text-editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. The native two-way sync is preserved because Gutenberg blocks remain core blocks.
  * Version:           1.0.2
  * Author:            Mario Peischl
+ * Author URI:        https://electricarts.de
  * Requires at least: 6.0
  * Requires PHP:      7.4
  */
