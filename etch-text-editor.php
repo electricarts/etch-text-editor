@@ -1,9 +1,11 @@
 <?php
 /**
  * Plugin Name:       Etch Text Editor
- * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. The native two-way sync is preserved because Gutenberg blocks remain core blocks.
- * Version:           0.17.0
+ * Plugin URI:        https://github.com/electricarts/etch-text-editor
+ * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. Normal editing preserves Gutenberg blocks; standalone paragraphs can be manually converted to native Etch text elements.
+ * Version:           1.0.15
  * Author:            Mario Peischl
+ * Author URI:        https://electricarts.de
  * Requires at least: 6.0
  * Requires PHP:      7.4
  */
@@ -13,9 +15,9 @@ if ( ! defined( 'ABSPATH' ) ) {
 }
 
 /**
- * Das Script pollt auf window.etch und beendet sich selbst, wenn kein
- * Etch-Builder auf der Seite läuft. Es hat daher keinen Effekt auf
- * normale Frontend-/Admin-Seiten.
+ * The script polls for window.etch and stops itself when no Etch builder
+ * is present on the page. It therefore has no effect on normal
+ * front-end / admin pages.
  */
 function eppe_enqueue() {
 	if ( ! is_user_logged_in() || ! current_user_can( 'edit_posts' ) ) {
@@ -25,7 +27,7 @@ function eppe_enqueue() {
 		'etch-text-editor',
 		plugin_dir_url( __FILE__ ) . 'editor.js',
 		array(),
-		'0.17.0',
+		'1.0.15',
 		true
 	);
 }

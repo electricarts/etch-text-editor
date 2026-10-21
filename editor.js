@@ -1,25 +1,27 @@
 /**
- * Etch Text Editor v0.17.0
+ * Etch Text Editor v1.0.15
  * ------------------------------------
- * Inline-Bearbeitung von Text direkt im Etch-Canvas:
- *  - Gutenberg-Passthrough-Blöcke (core/paragraph, core/heading, …):
- *    Vorschau im Canvas anklicken → direkt editieren. Speichern via
- *    replace() → Block bleibt Core-Block, 2-Wege-Sync bleibt erhalten.
- *  - Etch-Textelemente (p, h1–h6, li, …): Auswahl im Builder → schwebender
- *    „✎ Bearbeiten"-Button direkt am Text → inline editieren.
- *  - Schwebende Toolbar: B (strong), I (em), font-weight, Link,
- *    Format entfernen, Speichern (Cmd/Ctrl+Enter), Abbrechen (Esc).
- *  - Popup-Editor als Fallback (wenn der Canvas-Knoten nicht eindeutig
- *    gefunden wird).
+ * Graphical text-editing popup for the Etch builder:
+ *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
+ *    click the canvas preview to edit. Saved via replace() → the block
+ *    stays a core block, so Etch <-> Gutenberg two-way sync is preserved.
+ *  - Etch text elements (p, h1–h6, li, …): select in the builder → the
+ *    "✎ Edit" button appears next to the text → opens the popup.
+ *  - Text nested in Gutenberg containers (core/group, core/columns, …):
+ *    edited through the popup as well.
+ *  - Popup toolbar: bold (strong), italic (em), superscript, subscript,
+ *    font-weight, text color (incl. theme tokens), link (with internal
+ *    search), clear formatting. Auto-save on click-outside / Cmd+Enter.
  *
- * v0.5.0: Toolbar-Aktionen auf mousedown (robust gegen Etch-Canvas-Handler),
- * Edit-Button erscheint am Text statt unten rechts, Cleanup-Fixes,
- * Schutz gegen doppelt geladene Instanzen.
+ * All editing runs through the popup (decoupled from Etch's canvas React
+ * tree). Writes go through the Etch Public API (replace + saveAsync).
+ * Legacy literal `<br>` text returned by Gutenberg is normalized back to
+ * real Etch line-break elements automatically.
  */
 (() => {
 	"use strict";
 
-	const VERSION = "0.17.0";
+	const VERSION = "1.0.15";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -31,6 +33,20 @@
 		"core/preformatted": "Preformatted",
 		"core/verse": "Verse",
 	};
+
+	/* Flat, monochrome toolbar icons (kept inline so the editor has no icon dependency). */
+	const LINK_ICON_SVG =
+		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+		`<path d="M9 17H7A5 5 0 0 1 7 7h2"/>` +
+		`<path d="M15 7h2a5 5 0 1 1 0 10h-2"/>` +
+		`<line x1="8" x2="16" y1="12" y2="12"/>` +
+		`</svg>`;
+	const UNLINK_ICON_SVG =
+		`<svg class="eppe-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" ` +
+		`stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false">` +
+		`<path d="M15 7h2a5 5 0 0 1 0 10h-2m-6 0H7A5 5 0 0 1 7 7h2"/>` +
+		`</svg>`;
 
 	const ETCH_TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption"];
 	const INLINE_TAGS = ["a", "strong", "em", "span", "br", "code", "mark", "s", "sub", "sup", "u"];
@@ -69,7 +85,7 @@
 			});
 		try {
 			walk(etch.blocks.getTree());
-		} catch (_) { /* Builder in Übergangszustand */ }
+		} catch (_) { /* builder in a transitional state */ }
 		return out;
 	}
 
@@ -88,10 +104,21 @@
 		return (gb.innerContent || []).filter((s) => typeof s === "string").length <= 1;
 	}
 
+	/** A block-level Gutenberg passthrough that must not live inside an Etch
+	 * text element (core/paragraph renders its own <p>, for example). */
+	function isBlockGbPassthrough(node) {
+		return !!(
+			node &&
+			node.type === "etch/passthrough" &&
+			node.gutenbergBlock &&
+			EDITABLE_GB_BLOCKS.includes(node.gutenbergBlock.blockName)
+		);
+	}
+
 	/**
-	 * Verschachtelte, bearbeitbare Textblöcke innerhalb eines Container-Blocks
-	 * (core/group, core/columns, core/column, …) sammeln.
-	 * Liefert Objekte mit `path` (Index-Kette in innerBlocks), blockName und innerHTML.
+	 * Collect editable text blocks nested inside a container block
+	 * (core/group, core/columns, core/column, …).
+	 * Returns objects with `path` (index chain in innerBlocks), blockName and innerHTML.
 	 */
 	function collectNestedEditable(gb, path) {
 		path = path || [];
@@ -107,7 +134,7 @@
 		return out;
 	}
 
-	/** Passthrough-Container mit mindestens einem verschachtelten Textblock? */
+	/** Passthrough container with at least one nested text block? */
 	function isContainerPassthrough(block) {
 		if (!block || block.type !== "etch/passthrough" || !block.gutenbergBlock) return false;
 		const gb = block.gutenbergBlock;
@@ -115,7 +142,7 @@
 		return collectNestedEditable(gb).length > 0;
 	}
 
-	/** Innersten Gutenberg-Block über eine Index-Kette (path) holen */
+	/** Get the innermost Gutenberg block via an index chain (path) */
 	function nestedBlockAt(gb, path) {
 		let node = gb;
 		for (const idx of path) {
@@ -138,8 +165,8 @@
 				const tag = (c.tag || "span").toLowerCase();
 				if (!INLINE_TAGS.includes(tag)) return null;
 				const attrs = { ...(c.attributes || {}) };
-				/* Etch-interne Laufzeit-Klassen herausfiltern; styles (Style-IDs)
-				   bewusst NICHT als Klassen serialisieren */
+				/* Filter out Etch-internal runtime classes; deliberately do NOT
+				   serialize styles (style IDs) as classes */
 				if (attrs.class != null) {
 					const cls = String(attrs.class).split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) attrs.class = cls.join(" ");
@@ -164,10 +191,10 @@
 	}
 
 	/**
-	 * Vorlagen für neue Knoten: version/context/options von nativ erstellten
-	 * Blöcken aus dem Dokument klonen. Minimal-Shapes (version:1, context:{})
-	 * akzeptiert die API zwar, aber Etchs Renderer erwartet bei nativen
-	 * Blöcken zusätzliche interne Felder → "Error rendering block".
+	 * Templates for new nodes: clone version/context/options from natively
+	 * created blocks in the document. Minimal shapes (version:1, context:{})
+	 * are accepted by the API, but Etch's renderer expects additional
+	 * internal fields on native blocks → "Error rendering block".
 	 */
 	function findTemplates(etch) {
 		let textTpl = null;
@@ -180,7 +207,7 @@
 			});
 		try {
 			walk(etch.blocks.getTree());
-		} catch (_) { /* Übergangszustand */ }
+		} catch (_) { /* transitional state */ }
 		return { textTpl, elTpl };
 	}
 
@@ -190,7 +217,7 @@
 			version: tpl.version ?? 1,
 			context: JSON.parse(JSON.stringify(tpl.context || {})),
 		};
-		delete base.context.name; // Label des Vorlagen-Blocks nicht übernehmen
+		delete base.context.name; // don't carry over the template block's label
 		delete base.context.structureState;
 		if (tpl.options) base.options = JSON.parse(JSON.stringify(tpl.options));
 		return base;
@@ -219,8 +246,8 @@
 			const attributes = {};
 			for (const a of node.attributes) {
 				if (a.name === "class") {
-					/* Etch-interne Laufzeit-Klassen (etch-html-block etc.) NIEMALS
-					   persistieren – sie erzeugen kaputte Style-Referenzen */
+					/* NEVER persist Etch-internal runtime classes (etch-html-block etc.)
+					   – they create broken style references */
 					const cls = a.value.split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) attributes.class = cls.join(" ");
 				} else {
@@ -238,6 +265,66 @@
 			children.push(el);
 		});
 		return children;
+	}
+
+	const LEGACY_BR_RE = /<br\s*\/?>/i;
+
+	/**
+	 * Etch can receive a Gutenberg line break as literal text (`"<br>"`)
+	 * when an Etch paragraph is round-tripped through Gutenberg. Keep the
+	 * repair narrowly scoped to that exact legacy representation.
+	 */
+	function hasLegacyBrText(children) {
+		return (children || []).some((c) => {
+			if (c.type === "etch/text") return LEGACY_BR_RE.test(String(c.text || ""));
+			return hasLegacyBrText(c.children);
+		});
+	}
+
+	/** Convert literal `<br>` text nodes into real Etch `br` element nodes. */
+	function normalizeLegacyBrChildren(children, tpls) {
+		const out = [];
+		const re = /<br\s*\/?>/gi;
+		(children || []).forEach((c) => {
+			if (c.type === "etch/text") {
+				const text = String(c.text || "");
+				if (!LEGACY_BR_RE.test(text)) {
+					out.push(c);
+					return;
+				}
+				let last = 0;
+				let match;
+				re.lastIndex = 0;
+				while ((match = re.exec(text))) {
+					if (match.index > last) {
+						out.push({ ...c, children: [], text: text.slice(last, match.index) });
+					}
+					out.push({
+						type: "etch/element",
+						...baseFrom(tpls && tpls.elTpl),
+						tag: "br",
+						attributes: {},
+						children: [],
+					});
+					last = match.index + match[0].length;
+				}
+				if (last < text.length) {
+					out.push({ ...c, children: [], text: text.slice(last) });
+				}
+				return;
+			}
+
+			const copy = { ...c };
+			if (Array.isArray(c.children)) copy.children = normalizeLegacyBrChildren(c.children, tpls);
+			out.push(copy);
+		});
+		return out;
+	}
+
+	function containsBlockId(block, id) {
+		if (!block || !id) return false;
+		if (block.id === id) return true;
+		return (block.children || []).some((child) => containsBlockId(child, id));
 	}
 
 	function elementDescendants(block) {
@@ -278,6 +365,44 @@
 	/* Sanitizer                                                           */
 	/* ================================================================== */
 
+	/** Merge nested plain <span> wrappers into ONE span with combined
+	    style properties (e.g. font-weight + color).
+	    Only spans without a class that contain exactly one span as their sole content. */
+	function coalesceSpans(rootEl) {
+		let changed = true;
+		while (changed) {
+			changed = false;
+			rootEl.querySelectorAll("span").forEach((s) => {
+				if (s.className) return;
+				const kids = Array.from(s.childNodes).filter(
+					(n) => !(n.nodeType === 3 && !n.nodeValue.trim())
+				);
+				if (kids.length === 1 && kids[0].nodeType === 1 &&
+					kids[0].tagName === "SPAN" && !kids[0].className) {
+					const child = kids[0];
+					const cs = child.style;
+					for (let i = 0; i < cs.length; i++) {
+						const p = cs[i];
+						s.style.setProperty(p, cs.getPropertyValue(p));
+					}
+					while (child.firstChild) s.insertBefore(child.firstChild, child);
+					child.remove();
+					changed = true;
+				}
+			});
+		}
+	}
+
+	/** Paste as plain text: strips ALL formatting from pasted content
+	    (Word/Pages clipboard HTML brings colors, font sizes, classes, …). */
+	function handlePlainPaste(e, doc) {
+		const cb = e.clipboardData;
+		if (!cb) return;
+		e.preventDefault();
+		const text = cb.getData("text/plain");
+		if (text) (doc || document).execCommand("insertText", false, text);
+	}
+
 	/** Leere Inline-Elemente rekursiv auspacken (z. B. <strong></strong>-Reste) */
 	function stripEmptyInline(rootEl) {
 		let changed = true;
@@ -292,7 +417,32 @@
 		}
 	}
 
+	/** Convert literal "<br>" / "<br/>" / "<br />" in text nodes into real
+	    <br> elements (typed or escaped line breaks). */
+	function convertLiteralBr(rootEl) {
+		const doc = rootEl.ownerDocument;
+		const re = /<br\s*\/?>/gi;
+		const texts = [];
+		const walker = doc.createTreeWalker(rootEl, NodeFilter.SHOW_TEXT);
+		while (walker.nextNode()) texts.push(walker.currentNode);
+		texts.forEach((tn) => {
+			const s = tn.nodeValue;
+			if (!/<br\s*\/?>/i.test(s)) return;
+			const frag = doc.createDocumentFragment();
+			let last = 0, m;
+			re.lastIndex = 0;
+			while ((m = re.exec(s))) {
+				if (m.index > last) frag.appendChild(doc.createTextNode(s.slice(last, m.index)));
+				frag.appendChild(doc.createElement("br"));
+				last = m.index + m[0].length;
+			}
+			if (last < s.length) frag.appendChild(doc.createTextNode(s.slice(last)));
+			tn.parentNode.replaceChild(frag, tn);
+		});
+	}
+
 	function sanitizeEditorHtml(rootEl) {
+		convertLiteralBr(rootEl); // typed/escaped <br> into real line breaks
 		const doc = rootEl.ownerDocument;
 		["b", "i"].forEach((tag) => {
 			rootEl.querySelectorAll(tag).forEach((el) => {
@@ -317,7 +467,7 @@
 						n === "class";
 					if (!keep || n.startsWith("on")) child.removeAttribute(attr.name);
 				});
-				/* Etch-interne Laufzeit-Klassen entfernen (etch-html-block etc.) */
+				/* Remove Etch-internal runtime classes (etch-html-block etc.) */
 				if (child.hasAttribute("class")) {
 					const cls = child.getAttribute("class").split(/\s+/).filter((x) => x && !/^etch-/.test(x));
 					if (cls.length) child.setAttribute("class", cls.join(" "));
@@ -343,8 +493,14 @@
 				}
 			});
 		};
+		/* remove the temporary selection highlight wrapper, if present */
+		rootEl.querySelectorAll(".eppe-selhl").forEach((n) => {
+			while (n.firstChild) n.parentNode.insertBefore(n.firstChild, n);
+			n.remove();
+		});
 		walk(rootEl);
-		stripEmptyInline(rootEl); // leere Reste (z. B. nach removeFormat) entfernen
+		coalesceSpans(rootEl);   // merge nested spans into one
+		stripEmptyInline(rootEl); // remove empty leftovers (e.g. after removeFormat)
 		return rootEl.innerHTML;
 	}
 
@@ -353,7 +509,7 @@
 	/* ================================================================== */
 
 	function restRoot() {
-		/* wpApiSettings.root ist im Builder meist vorhanden; sonst Standardpfad */
+		/* wpApiSettings.root is usually present in the builder; otherwise a default path */
 		try {
 			if (window.wpApiSettings && window.wpApiSettings.root) return window.wpApiSettings.root;
 		} catch (_) { /* ignore */ }
@@ -368,7 +524,7 @@
 		return headers;
 	}
 
-	/** Seiten & Beiträge über die Such-API */
+	/** Pages & posts via the search API */
 	async function searchContent(query) {
 		const root = restRoot().replace(/\/$/, "/");
 		const url = root + "wp/v2/search?" + new URLSearchParams({
@@ -388,7 +544,7 @@
 		}));
 	}
 
-	/** Medien/Dateien über den Media-Endpoint */
+	/** Media/files via the media endpoint */
 	async function searchMedia(query) {
 		const root = restRoot().replace(/\/$/, "/");
 		const url = root + "wp/v2/media?" + new URLSearchParams({
@@ -409,11 +565,11 @@
 		});
 	}
 
-	/** Beide Quellen parallel; einzelne Fehler nicht fatal */
+	/** Both sources in parallel; individual errors are non-fatal */
 	async function searchInternal(query) {
 		const [content, media] = await Promise.all([
-			searchContent(query).catch((e) => { log("Content-Suche:", String(e)); return []; }),
-			searchMedia(query).catch((e) => { log("Media-Suche:", String(e)); return []; }),
+			searchContent(query).catch((e) => { log("Content search:", String(e)); return []; }),
+			searchMedia(query).catch((e) => { log("Media search:", String(e)); return []; }),
 		]);
 		return [...content, ...media].filter((r) => r.url).slice(0, 10);
 	}
@@ -451,7 +607,7 @@
 		return vars;
 	}
 
-	/** Nur echte Farb-Tokens, ohne Etch-/Builder-interne Variablen. */
+	/** Only real color tokens, excluding Etch/builder-internal variables. */
 	function colorTokenNames(vars) {
 		const EXCLUDE = /^--(e-|etch|lightningcss|stripe|wp-|admin-)/i;
 		const isColor = (v) => /#|rgb|hsl|oklch|oklab|color-mix/i.test(v) || /^var\(/i.test(v);
@@ -460,20 +616,20 @@
 			.sort();
 	}
 
-	/* Bevorzugte Reihenfolge der ACSS-Farbfamilien */
+	/* Preferred order of the ACSS color families */
 	const TOKEN_FAMILY_ORDER = [
 		"primary", "secondary", "tertiary", "accent", "base", "shade", "neutral",
 		"action", "success", "danger", "error", "warning", "info",
 		"white", "black", "pure-white", "pure-black", "text", "heading", "link",
 	];
-	/* Abstufungen (heller → dunkler); Grundton (kein Suffix) zuerst */
+	/* Shades (lighter → darker); base tone (no suffix) first */
 	const TOKEN_MOD = /-(trans-\d+|ultra-light|semi-light|light|hover|semi-dark|ultra-dark|dark)$/;
 	const TOKEN_MOD_RANK = {
 		"": 0, "ultra-light": 1, "light": 2, "semi-light": 3, "hover": 4,
 		"semi-dark": 5, "dark": 6, "ultra-dark": 7,
 	};
 
-	/** Tokens nach Familie gruppieren und sinnvoll ordnen. */
+	/** Group tokens by family and order them sensibly. */
 	function groupColorTokens(names) {
 		const groups = {};
 		names.forEach((n) => {
@@ -528,19 +684,19 @@
 			return;
 		}
 		window.__eppeActive = VERSION;
-		document.querySelectorAll(".eppe-panel, .eppe-launcher, #eppe-styles").forEach((n) => n.remove());
+		document.querySelectorAll(".eppe-panel, .eppe-launcher, .eppe-tooltip, .eppe-convert-notice, #eppe-styles").forEach((n) => n.remove());
 
 		injectTopStyles();
 
 		/* ---------------------------------------------------------------- */
-		/* Persistenz                                                        */
+		/* Persistence                                                       */
 		/* ---------------------------------------------------------------- */
 
 		async function persistGb(blockId, htmlContent) {
 			const fresh = etch.blocks.getJson(blockId);
 			const gb = fresh.gutenbergBlock;
 			const outer = parseOuter(gb.innerHTML);
-			if (!outer) throw new Error("innerHTML nicht parsebar");
+			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
 			sanitizeEditorHtml(clone);
@@ -559,23 +715,23 @@
 			return newId;
 		}
 
-		/** Verschachtelten Textblock in einem Container-Passthrough speichern.
-		    Nur der betroffene innere Block wird geändert; die Container-Hülle
-		    (innerContent mit den null-Platzhaltern) bleibt unangetastet. */
+		/** Save a nested text block inside a container passthrough.
+		    Only the affected inner block is changed; the container wrapper
+		    (innerContent with the null placeholders) is left untouched. */
 		async function persistGbNested(passthroughId, path, htmlContent) {
 			const fresh = etch.blocks.getJson(passthroughId);
-			const gb = JSON.parse(JSON.stringify(fresh.gutenbergBlock)); // tiefe Kopie
+			const gb = JSON.parse(JSON.stringify(fresh.gutenbergBlock)); // deep copy
 			const target = nestedBlockAt(gb, path);
 			if (!target) throw new Error("Nested block not found.");
 
 			const outer = parseOuter(target.innerHTML);
-			if (!outer) throw new Error("innerHTML nicht parsebar");
+			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
 			sanitizeEditorHtml(clone);
 			const newOuterHtml = clone.outerHTML;
 
-			/* Whitespace um das Tag herum (z. B. "\n<p>…</p>\n") erhalten */
+			/* Preserve whitespace around the tag (e.g. "\n<p>…</p>\n") */
 			const newInnerHTML = target.innerHTML.includes(outer.outerHTML)
 				? target.innerHTML.replace(outer.outerHTML, newOuterHtml)
 				: newOuterHtml;
@@ -612,29 +768,39 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Canvas-Styles (pro iframe-Dokument)                               */
+		/* Canvas styles (per iframe document)                               */
 		/* ---------------------------------------------------------------- */
 
 		const CANVAS_CSS = `
+		.eppe-tb, .eppe-tb * {
+			font-family: var(--e-font-interface, Inter, system-ui, sans-serif) !important;
+		}
 		.eppe-tb {
 			position: fixed; z-index: 2147483647; display: flex; flex-wrap: wrap;
 			gap: 3px; align-items: center; padding: 5px 6px;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 8px;
 			box-shadow: 0 4px 20px rgba(0,0,0,.45);
-			font: 12px/1 system-ui, sans-serif; pointer-events: auto;
+			font: 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif); pointer-events: auto;
 		}
 		.eppe-tb button {
 			background: #2a2a32; color: #e5e5ea; border: 1px solid #3a3a44;
 			border-radius: 5px; padding: 5px 8px; cursor: pointer;
-			font: 600 12px/1 system-ui, sans-serif; min-width: 26px;
+			font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif); min-width: 26px;
 			pointer-events: auto;
+		}
+		.eppe-tb .eppe-icon-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 34px; min-width: 34px; height: 26px; padding: 3px 6px;
+		}
+		.eppe-tb .eppe-icon {
+			display: block; width: 18px; height: 18px; flex: none;
 		}
 		.eppe-tb button:hover { background: #3a3a46; }
 		.eppe-tb .eppe-tb-i { font-style: italic; font-weight: 400; }
 		.eppe-tb .eppe-tb-color {
 			display: inline-flex; align-items: center; gap: 3px; cursor: pointer;
 			background: #2a2a32; color: #e5e5ea; border: 1px solid #3a3a44;
-			border-radius: 5px; padding: 4px 6px; font: 600 12px/1 system-ui, sans-serif;
+			border-radius: 5px; padding: 4px 6px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif);
 		}
 		.eppe-tb .eppe-tb-color:hover { background: #3a3a46; }
 		.eppe-tb .eppe-tb-color input {
@@ -674,14 +840,15 @@
 		.eppe-toast {
 			position: fixed; z-index: 2147483647; padding: 7px 12px;
 			background: #1e1e24; color: #34d399; border: 1px solid #3a3a44;
-			border-radius: 7px; font: 600 12px/1 system-ui, sans-serif;
+			border-radius: 7px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif);
 			box-shadow: 0 4px 16px rgba(0,0,0,.4);
 		}
 		.eppe-toast.error { color: #f87171; }
 		.eppe-editbtn {
 			position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 7px;
 			background: #7c3aed; color: #fff; border: none; border-radius: 8px;
-			padding: 9px 16px; font: 700 14px/1 system-ui, sans-serif; cursor: pointer;
+			padding: 9px 16px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif) !important; cursor: pointer;
+			font-family: var(--e-font-interface, Inter, system-ui, sans-serif) !important;
 			box-shadow: 0 4px 16px rgba(0,0,0,.45); pointer-events: auto;
 		}
 		.eppe-editbtn:hover { background: #6d28d9; }
@@ -711,8 +878,8 @@
 			setTimeout(() => t.remove(), isError ? 4000 : 2000);
 		}
 
-		/** Aktion auf mousedown ausführen – Klick-Phase wird neutralisiert,
-		 *  damit Etchs Canvas-Handler und Fokuswechsel nicht dazwischenfunken. */
+		/** Run the action on mousedown – the click phase is neutralized
+		 *  so Etch's canvas handlers and focus changes don't interfere. */
 		function onTap(btn, fn) {
 			btn.addEventListener("mousedown", (e) => {
 				e.preventDefault();
@@ -730,8 +897,8 @@
 		/* ---------------------------------------------------------------- */
 
 		let session = null;
-		let activeMirrorEl = null; // Canvas-Knoten, der gerade live vom Popup gespiegelt wird
-		let lastSelected = false; // Sentinel: erzwingt Re-Evaluation im Poll
+		let activeMirrorEl = null; // canvas node currently mirrored live by the popup
+		let lastSelected = false; // sentinel: forces re-evaluation in the poll
 
 		function buildToolbar(doc) {
 			ensureCanvasStyles(doc);
@@ -749,8 +916,8 @@
 					<option value="700">700</option><option value="800">800</option>
 				</select>
 				<label class="eppe-tb-color" title="Text color">A<input type="color" value="#000000" /></label>
-				<button class="eppe-tb-link" title="Add link">&#128279;</button>
-				<button data-cmd="unlink" title="Remove link">&#128279;&#10060;</button>
+				<button class="eppe-tb-link eppe-icon-btn" title="Add link" aria-label="Add link">${LINK_ICON_SVG}</button>
+				<button class="eppe-icon-btn" data-cmd="unlink" title="Remove link" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
 				<button class="eppe-tb-clear" title="Clear formatting">T&#8339;</button>
 				<span class="eppe-tb-sep"></span>
 				<button class="eppe-tb-cancel" title="Discard (Esc) – clicking outside saves automatically">&#10005;</button>
@@ -770,7 +937,7 @@
 			if (!el.isConnected) return;
 			const r = el.getBoundingClientRect();
 			const tbH = toolbar.offsetHeight || 40;
-			/* bevorzugt UNTER dem Element – über dem Element sitzt Etchs eigenes Auswahl-Label */
+			/* prefer BELOW the element – Etch's own selection label sits above it */
 			let top = r.bottom + 10;
 			if (top + tbH > (win.innerHeight || 600) - 8) top = Math.max(4, r.top - tbH - 10);
 			toolbar.style.top = top + "px";
@@ -797,7 +964,7 @@
 		async function saveSession() {
 			if (!session || session.saving) return;
 			const s = session;
-			s.saving = true; // Doppel-Save verhindern (Klick außen + Auto-Save)
+			s.saving = true; // prevent double save (outside click + auto-save)
 			try {
 				if (!s.el.isConnected) throw new Error("The element was re-rendered by the builder – please reopen it.");
 				const blockId = s.resolveBlockId();
@@ -817,9 +984,9 @@
 		}
 
 		/**
-		 * Bearbeitung sofort ins Etch-Modell committen (→ HTML-Feld aktualisiert
-		 * sich sofort) und die Inline-Bearbeitung nahtlos wieder öffnen.
-		 * Für diskrete Aktionen wie Unlink/Clear gedacht (nicht beim Tippen).
+		 * Commit the edit into the Etch model immediately (→ the HTML panel
+		 * updates at once) and reopen the inline editing seamlessly.
+		 * Intended for discrete actions like Unlink/Clear (not while typing).
 		 */
 		async function commitLive() {
 			if (!session || session.saving) return;
@@ -835,11 +1002,11 @@
 					? await persistGb(blockId, html)
 					: await persistEtch(blockId, html);
 
-				endSession(false); // aktuelle (jetzt veraltete) Session beenden
+				endSession(false); // end the current (now stale) session
 
-				/* Nach dem Re-Render den neuen Knoten finden und Bearbeitung
-				   wieder aufnehmen – mehrere Versuche, da das Canvas asynchron
-				   neu rendert. */
+				/* After the re-render, find the new node and resume
+				   editing – several attempts, since the canvas re-renders
+				   asynchronously. */
 				const reopen = (tries) => {
 					let node = null;
 					try {
@@ -847,7 +1014,7 @@
 						node = mode === "etch"
 							? findCanvasNodeForEtch(fresh)
 							: findPreviewNodeForGb(fresh);
-					} catch (_) { /* noch nicht bereit */ }
+					} catch (_) { /* not ready yet */ }
 					if (node) {
 						if (mode === "gb") startGbSessionFromPreview(node);
 						else startSession("etch", node, () => newId);
@@ -857,7 +1024,7 @@
 				};
 				setTimeout(() => reopen(12), 150);
 			} catch (e) {
-				err("Live-Commit fehlgeschlagen:", apiErrInfo(e));
+				err("Live commit failed:", apiErrInfo(e));
 				if (session) session.saving = false;
 			}
 		}
@@ -873,9 +1040,9 @@
 			const toolbar = buildToolbar(doc);
 			const cleanup = [];
 
-			stripEmptyInline(el); // unsichtbare leere Inline-Reste vor dem Editieren entfernen
+			stripEmptyInline(el); // remove invisible empty inline leftovers before editing
 
-			/* Bereits vor dem Öffnen im Canvas gesetzte Textmarkierung übernehmen */
+			/* Adopt a text selection already made in the canvas before opening */
 			let preRange = null;
 			try {
 				const preSel = win.getSelection();
@@ -897,7 +1064,7 @@
 			el.setAttribute("data-eppe-editing", "1");
 			el.focus();
 
-			/* Markierung nach dem Fokussieren wiederherstellen (focus collabiert sie sonst) */
+			/* Restore the selection after focusing (focus collapses it otherwise) */
 			if (preRange) {
 				try {
 					const sel = win.getSelection();
@@ -906,14 +1073,19 @@
 				} catch (_) { /* ignore */ }
 			}
 
-			/* Etchs Canvas-Handler vom editierten Element fernhalten */
+			/* Keep Etch's canvas handlers away from the edited element */
 			const stop = (e) => e.stopPropagation();
 			["mousedown", "mouseup", "click", "dblclick", "keydown", "keypress", "keyup", "input", "paste"].forEach((t) => {
 				el.addEventListener(t, stop, true);
 				cleanup.push(() => el.removeEventListener(t, stop, true));
 			});
 
-			/* Toolbar-Events nicht zu Etch durchsickern lassen (Bubble-Phase) */
+			/* Paste always as plain text (strip Word/Pages formatting) */
+			const onPaste = (e) => handlePlainPaste(e, doc);
+			el.addEventListener("paste", onPaste, true);
+			cleanup.push(() => el.removeEventListener("paste", onPaste, true));
+
+			/* Don't let toolbar events leak to Etch (bubble phase) */
 			["mousedown", "mouseup", "click", "dblclick", "keydown", "keyup", "input", "paste"].forEach((t) => {
 				toolbar.addEventListener(t, stop, false);
 			});
@@ -930,9 +1102,9 @@
 			el.addEventListener("keydown", onKey, true);
 			cleanup.push(() => el.removeEventListener("keydown", onKey, true));
 
-			/* Klick außerhalb des bearbeiteten Absatzes: Session automatisch
-			   speichern (bei Änderungen) und ggf. direkt in den angeklickten
-			   Textabsatz wechseln – wie in einem normalen Editor. */
+			/* Click outside the edited paragraph: automatically save the
+			   session (if changed) and, if applicable, switch directly into
+			   the clicked text paragraph – like in a normal editor. */
 			const onDocDown = (e) => {
 				try {
 					if (!session || session.el !== el) return;
@@ -956,7 +1128,7 @@
 						endSession(false);
 						maybeSwitch();
 					}
-				} catch (_) { /* nie Etch stören */ }
+				} catch (_) { /* never disturb Etch */ }
 			};
 			doc.addEventListener("mousedown", onDocDown, true);
 			cleanup.push(() => doc.removeEventListener("mousedown", onDocDown, true));
@@ -1011,11 +1183,11 @@
 					el.focus();
 					restoreRange();
 					if (btn.dataset.cmd === "unlink") {
-						/* execCommand("unlink") wirkt nur bei echter Markierung –
-						   direkte DOM-Manipulation ist sofort sichtbar */
+						/* execCommand("unlink") only works with a real selection –
+						   direct DOM manipulation is immediately visible */
 						unwrapInScope("a");
 						onSelChange();
-						commitLive(); // sofort ins Etch-Modell/HTML-Feld übernehmen
+						commitLive(); // apply to the Etch model / HTML panel immediately
 						return;
 					}
 					doc.execCommand(btn.dataset.cmd, false, null);
@@ -1023,8 +1195,8 @@
 				});
 			});
 
-			/* Markierten Bereich in einen span mit Style-Eigenschaft hüllen
-			   (font-weight, color, …) – sofort sichtbar */
+			/* Wrap the selected range in a span with a style property
+			   (font-weight, color, …) – immediately visible */
 			const applySpanStyle = (prop, value) => {
 				if (!session.savedRange || session.savedRange.collapsed) {
 					toast(doc, "Please select some text first.", true);
@@ -1119,14 +1291,14 @@
 			const doSearch = (q) => {
 				clearTimeout(searchTimer);
 				if (/^https?:\/\//i.test(q) || q.startsWith("/") || q.startsWith("#") || q.startsWith("mailto:")) {
-					renderResults(null); return; // sieht nach echter URL aus → nicht suchen
+					renderResults(null); return; // looks like a real URL → don't search
 				}
 				if (q.length < 2) { renderResults(null); return; }
 				searchTimer = setTimeout(async () => {
 					try {
 						renderResults(await searchInternal(q));
 					} catch (e) {
-						log("Interne Suche fehlgeschlagen:", String(e));
+						log("Internal search failed:", String(e));
 						renderResults(null);
 					}
 				}, 250);
@@ -1166,13 +1338,13 @@
 				/* Alle Inline-Formatierungen sofort sichtbar auspacken */
 				unwrapInScope("span,strong,em,a,u,s,mark,code,sub,sup");
 				onSelChange();
-				commitLive(); // sofort ins Etch-Modell/HTML-Feld übernehmen
+				commitLive(); // apply to the Etch model / HTML panel immediately
 			});
 
 			onTap(toolbar.querySelector(".eppe-tb-cancel"), () => endSession(true));
 
-			/* Klick ins Builder-UI (Top-Fenster) während der Bearbeitung:
-			   ebenfalls automatisch speichern bzw. schließen */
+			/* Click into the builder UI (top window) while editing:
+			   also auto-save or close */
 			const onTopDown = () => {
 				if (!session || session.el !== el || session.saving) return;
 				const changed = el.innerHTML !== session.originalHtml;
@@ -1187,7 +1359,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Edit-Button direkt am Text                                        */
+		/* Edit button next to Etch's blue selection label                   */
 		/* ---------------------------------------------------------------- */
 
 		let editBtn = null; // { btn, doc, node, target }
@@ -1199,6 +1371,23 @@
 			}
 		}
 
+		function findEtchSelectionLabel(doc, node, nodeRect) {
+			const labelPattern = /^.+\s+[—-]\s+\d+\s*[×x]\s*\d+$/;
+			const candidates = [];
+			doc.body.querySelectorAll("*").forEach((el) => {
+				if (el === node || el.contains(node) || node.contains(el)) return;
+				if (el.closest(".eppe-editbtn, .eppe-tb, [data-eppe-preview]")) return;
+				if (!labelPattern.test(normText(el.textContent))) return;
+				const rect = el.getBoundingClientRect();
+				if (!rect.width || !rect.height) return;
+				if (Math.abs(rect.bottom - nodeRect.top) > 14) return;
+				if (Math.abs(rect.left - nodeRect.left) > 28) return;
+				candidates.push({ el, rect, area: rect.width * rect.height });
+			});
+			candidates.sort((a, b) => a.area - b.area);
+			return candidates.length ? candidates[0].el : null;
+		}
+
 		function positionEditBtn() {
 			if (!editBtn) return;
 			const { btn, node, doc } = editBtn;
@@ -1207,10 +1396,18 @@
 			const h = btn.offsetHeight || 26;
 			const w = btn.offsetWidth || 100;
 			const win = doc.defaultView;
-			let top = r.top - h - 6;
+			const label = editBtn.label && editBtn.label.isConnected
+				? editBtn.label
+				: findEtchSelectionLabel(doc, node, r);
+			if (label) editBtn.label = label;
+			const labelRect = label ? label.getBoundingClientRect() : null;
+			let top = labelRect
+				? labelRect.top + (labelRect.height - h) / 2
+				: r.top - h - 6;
 			if (top < 4) top = r.bottom + 6;
+			const preferredLeft = labelRect ? labelRect.right + 8 : r.left + 180;
 			btn.style.top = top + "px";
-			btn.style.left = Math.max(4, Math.min(r.right - w, (win.innerWidth || 800) - w - 8)) + "px";
+			btn.style.left = Math.max(4, Math.min(preferredLeft, (win.innerWidth || 800) - w - 8)) + "px";
 		}
 
 		function showEditBtn(node, target) {
@@ -1222,24 +1419,26 @@
 				btn.className = "eppe-editbtn";
 				btn.innerHTML = "&#9998; Edit";
 				onTap(btn, () => {
+					/* Toggle: a second click on the edit button closes the popup */
+					if (popup.isOpen()) { popup.saveOrClose(); return; }
 					const t = editBtn && editBtn.target;
 					const n = editBtn && editBtn.node;
 					hideEditBtn();
 					if (!t) return;
-					/* Einheitlich über das Popup bearbeiten (robuster als Inline).
-					   Canvas-Knoten für Live-Vorschau mitgeben: bei Etch das <p>,
-					   bei GB das Content-Element der Vorschau. */
+					/* Edit uniformly through the popup (more robust than inline).
+					   Pass the canvas node for live preview: the <p> for Etch,
+					   the preview's content element for GB. */
 					popup.open({ ...t, mirrorEl: n || null });
 				});
 				doc.body.appendChild(btn);
-				editBtn = { btn, doc, node, target };
+				editBtn = { btn, doc, node, target, label: null };
 			}
 			editBtn.target = target;
 			positionEditBtn();
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Canvas-Vorschau für Gutenberg-Blöcke                              */
+		/* Canvas preview for Gutenberg blocks                               */
 		/* ---------------------------------------------------------------- */
 
 		function injectPreview(el, block, label) {
@@ -1261,7 +1460,7 @@
 			const badge = doc.createElement("span");
 			badge.textContent = "GB";
 			badge.style.cssText =
-				"display:inline-block;font:700 9px/1.4 system-ui,sans-serif;color:#7c3aed;" +
+				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#7c3aed;" +
 				"border:1px solid #7c3aed;border-radius:4px;padding:1px 4px;margin-right:8px;" +
 				"vertical-align:middle;letter-spacing:.5px;";
 			el.appendChild(badge);
@@ -1273,8 +1472,8 @@
 			el.style.opacity = "1";
 			el.style.color = "inherit";
 			el.setAttribute("data-eppe-preview", "1");
-			if (el.parentElement) el.parentElement.style.background = "rgba(124,58,237,.05)";
-			el.style.background = "transparent";
+			el.style.backgroundImage = "none";
+			el.style.backgroundColor = GB_PREVIEW_HIGHLIGHT;
 
 			content.addEventListener("mousedown", (e) => e.stopPropagation(), true);
 			content.addEventListener("click", (e) => {
@@ -1285,14 +1484,14 @@
 			}, true);
 		}
 
-		/** Vorschau für Container-Passthroughs (core/group, core/columns, …):
-		    zeigt jeden verschachtelten Textblock als eigene, klickbare Zeile.
-		    Bearbeitung läuft über das Popup (mode "gbnested"). */
+		/** Preview for container passthroughs (core/group, core/columns, …):
+		    shows each nested text block as its own clickable line.
+		    editing happens via the popup (mode "gbnested"). */
 		function injectContainerPreview(el, block, label) {
 			const nested = collectNestedEditable(block.gutenbergBlock);
 			if (!nested.length) return;
 
-			/* Signatur zum Vermeiden unnötiger Neuaufbauten (Flackern) */
+			/* Signature to avoid unnecessary rebuilds (flicker) */
 			const sig = nested.map((n) => n.path.join(".") + ":" + n.innerHTML).join("||");
 			if (el.getAttribute("data-eppe-sig") === sig && el.getAttribute("data-eppe-preview") === "1") return;
 
@@ -1303,7 +1502,7 @@
 			const badge = doc.createElement("span");
 			badge.textContent = "GB " + label.replace(/^core\//, "");
 			badge.style.cssText =
-				"display:inline-block;font:700 9px/1.4 system-ui,sans-serif;color:#7c3aed;" +
+				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#7c3aed;" +
 				"border:1px solid #7c3aed;border-radius:4px;padding:1px 4px;margin-right:8px;" +
 				"vertical-align:middle;letter-spacing:.5px;";
 			el.appendChild(badge);
@@ -1336,12 +1535,33 @@
 			el.setAttribute("data-eppe-preview", "1");
 			el.setAttribute("data-eppe-container", label);
 			el.setAttribute("data-eppe-sig", sig);
-			if (el.parentElement) el.parentElement.style.background = "rgba(124,58,237,.05)";
-			el.style.background = "transparent";
+			el.style.backgroundImage = "none";
+			el.style.backgroundColor = GB_PREVIEW_HIGHLIGHT;
 		}
 
-		/** Container-Passthrough anhand Label + Positionsindex auflösen
-		    (robust gegen id-Wechsel nach dem Speichern) */
+		const GB_PREVIEW_HIGHLIGHT = "rgba(124,58,237,.05)";
+		const GB_SECTION_ATTR = "data-eppe-gb-section";
+
+		/**
+		 * Highlight only the Gutenberg passthrough preview itself. Also clean up
+		 * the previous 1.0.5 parent-section highlight if the script is updated
+		 * without a full canvas reload.
+		 */
+		function syncGbPreviewHighlights(doc) {
+			doc.querySelectorAll("[data-eppe-preview]").forEach((preview) => {
+				preview.style.backgroundImage = "none";
+				preview.style.backgroundColor = GB_PREVIEW_HIGHLIGHT;
+			});
+
+			doc.querySelectorAll(`[${GB_SECTION_ATTR}]`).forEach((section) => {
+				section.style.backgroundColor = section.__eppePreviousBackgroundColor || "";
+				delete section.__eppePreviousBackgroundColor;
+				section.removeAttribute(GB_SECTION_ATTR);
+			});
+		}
+
+		/** Resolve a container passthrough by label + position index
+		    (robust against id changes after saving) */
 		function resolveContainerBlock(previewEl, label) {
 			const doc = previewEl.ownerDocument;
 			const peers = Array.from(doc.querySelectorAll(`[data-eppe-container="${label}"]`));
@@ -1352,7 +1572,7 @@
 			return blocks[idx] || blocks[0] || null;
 		}
 
-		/** Popup für einen verschachtelten Textblock öffnen */
+		/** Open the popup for a nested text block */
 		function openNestedPopup(previewEl, path, label, mirrorEl) {
 			const block = resolveContainerBlock(previewEl, label);
 			if (!block) { toast(previewEl.ownerDocument, "Container block not found.", true); return; }
@@ -1413,8 +1633,8 @@
 		}
 
 		function runPreviewScan() {
+			void runBackgroundRepairs().then(() => refreshConversionNotice()).catch(() => { /* optional */ });
 			const blocks = collectPassthroughs(etch);
-			if (!blocks.length) return;
 
 			const byLabel = {};
 			blocks.forEach((b) => {
@@ -1425,7 +1645,7 @@
 			for (const doc of iframeDocs()) {
 				if (!doc.body) continue;
 
-				/* 1) Neue Platzhalter mit Vorschau versehen */
+				/* 1) Add previews to new placeholders */
 				const counters = {};
 				doc.body.querySelectorAll("*:not([data-eppe-preview])").forEach((el) => {
 					if (el.children.length) return;
@@ -1441,14 +1661,14 @@
 					try {
 						if (isContainerPassthrough(block)) injectContainerPreview(el, block, t);
 						else injectPreview(el, block, t);
-					} catch (_) { /* Vorschau optional */ }
+					} catch (_) { /* preview is optional */ }
 				});
 
-				/* 2) Bereits injizierte Vorschauen mit dem frischen Blockinhalt
-				   abgleichen (z. B. nach einem GB-Speichervorgang) */
+				/* 2) Reconcile already-injected previews with the fresh block
+				   content (e.g. after a GB save) */
 				doc.querySelectorAll("[data-eppe-content]").forEach((content) => {
-					if (session && session.el === content) return; // wird gerade editiert
-					if (activeMirrorEl === content) return; // Live-Vorschau nicht überschreiben
+					if (session && session.el === content) return; // currently being edited
+					if (activeMirrorEl === content) return; // don't overwrite the live preview
 					const block = resolveGbBlockForPreview(content);
 					if (!block) return;
 					const outer = parseOuter(block.gutenbergBlock.innerHTML);
@@ -1461,20 +1681,25 @@
 					}
 				});
 
-				/* 3) Container-Vorschauen bei Änderung neu aufbauen
-				   (Signatur-Guard in injectContainerPreview verhindert Flackern) */
+				/* 3) Rebuild container previews when they change
+				   (signature guard in injectContainerPreview prevents flicker) */
 				doc.querySelectorAll("[data-eppe-container]").forEach((el) => {
-					if (activeMirrorEl && el.contains(activeMirrorEl)) return; // Live-Zeile schützen
+					if (activeMirrorEl && el.contains(activeMirrorEl)) return; // protect the live line
 					const label = el.getAttribute("data-eppe-container");
 					const block = resolveContainerBlock(el, label);
 					if (!block) return;
 					try { injectContainerPreview(el, block, label); } catch (_) { /* optional */ }
 				});
+
+				/* Apply the section highlight only after all previews are known,
+				   and remove it again when a passthrough disappears. */
+				syncGbPreviewHighlights(doc);
 			}
+			refreshConversionNotice();
 		}
 
-		/** Vorschau nach einem Speichervorgang zeitversetzt mehrfach auffrischen
-		    (Etch rendert den Passthrough-Platzhalter asynchron neu) */
+		/** Refresh the preview several times, staggered, after a save
+		    (Etch re-renders the passthrough placeholder asynchronously) */
 		function refreshPreviewBurst() {
 			[150, 500, 1000, 1800].forEach((ms) =>
 				setTimeout(() => {
@@ -1505,7 +1730,7 @@
 				});
 			}
 
-			if (!candidates.length) return null; // Block evtl. (noch) nicht gerendert
+			if (!candidates.length) return null; // block may not be rendered (yet)
 			if (candidates.length === 1) return candidates[0];
 
 			/* Mehrere identische Texte: Position im Strukturbaum als Index nutzen */
@@ -1532,7 +1757,7 @@
 				});
 			try {
 				walk(etch.blocks.getTree());
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 
 			if (found && candidates[k]) return candidates[k];
 			log(`Canvas node ambiguous (${candidates.length} matches for <${tag}>) – popup fallback.`);
@@ -1540,10 +1765,10 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Workaround Etch-Bug (1.6.3): Doppelklick-Inline-Editor crasht     */
-		/* bei Absätzen mit Inline-Links ("reading 'count'"). Wir fangen     */
-		/* den Doppelklick ab, bevor er Etchs Editor erreicht, und öffnen    */
-		/* stattdessen unsere eigene Bearbeitung.                            */
+		/* Workaround Etch bug (1.6.3): double-click inline editor crashes   */
+		/* on paragraphs with inline links ("reading 'count'"). We catch    */
+		/* the double-click before it reaches Etch's editor and open        */
+		/* our own editor instead.                                          */
 		/* ---------------------------------------------------------------- */
 
 		function findEtchBlockForNode(node) {
@@ -1565,16 +1790,16 @@
 				});
 			try {
 				walk(etch.blocks.getTree());
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 			return matches.length === 1 ? matches[0] : null;
 		}
 
 		function installDblClickGuard(doc) {
 			if (doc.__eppeDblGuard) return;
 			doc.__eppeDblGuard = true;
-			/* Capture auf Dokument-Ebene läuft VOR Etchs Handlern (die tiefer
-			   im Baum hängen) – so erreicht der Doppelklick den fehlerhaften
-			   Inline-Editor gar nicht erst. */
+			/* Document-level capture runs BEFORE Etch's handlers (which sit
+			   deeper in the tree) – so the double-click never reaches the
+			   faulty inline editor at all. */
 			doc.addEventListener("dblclick", (e) => {
 				try {
 					if (session) return;
@@ -1583,13 +1808,13 @@
 					if (t.closest(".eppe-tb") || t.closest(".eppe-editbtn") || t.closest("[data-eppe-preview]")) return;
 					const container = t.closest(ETCH_TEXT_TAGS.join(","));
 					if (!container) return;
-					if (!container.querySelector("a")) return; // Bug betrifft nur Inline-Links
+					if (!container.querySelector("a")) return; // bug only affects inline links
 					e.preventDefault();
 					e.stopPropagation();
 					const block = findEtchBlockForNode(container);
 					if (block) {
 						log("Bypassed Etch's inline editor (link-bug workaround), opening plugin editor.");
-						startSession("etch", container, () => block.id);
+						popup.open({ mode: "etch", block, mirrorEl: container });
 					} else {
 						toast(doc, "Skipped Etch's inline editor (link bug in Etch 1.6.3). Please use the ✎ Edit button.", true);
 					}
@@ -1601,8 +1826,8 @@
 		/* Popup                                                             */
 		/* ---------------------------------------------------------------- */
 
-		/** BoundingRect eines Knotens in Koordinaten des Top-Fensters
-		    (rechnet iframe-Verschachtelung ein) */
+		/** Bounding rect of a node in top-window coordinates
+		    (accounts for iframe nesting) */
 		function nodeRectInTop(node) {
 			let r = node.getBoundingClientRect();
 			let rect = { top: r.top, left: r.left, bottom: r.bottom, right: r.right, width: r.width, height: r.height };
@@ -1621,6 +1846,433 @@
 
 		const popup = buildPopup();
 
+		let legacyBrRepairInFlight = false;
+
+		/**
+		 * Repair Etch text elements that came back from Gutenberg with a literal
+		 * `<br>` string in an `etch/text` node. This runs in the background from
+		 * the preview loop, so the HTML panel and the rendered canvas both receive
+		 * a real Etch `br` element without requiring a manual popup save.
+		 */
+		async function repairLegacyEtchBreaks() {
+			if (legacyBrRepairInFlight || session || popup.isOpen()) return;
+
+			let candidates = [];
+			try {
+				const walk = (nodes, insideTextElement) =>
+					(nodes || []).forEach((node) => {
+						const isTextElement =
+							node.type === "etch/element" && ETCH_TEXT_TAGS.includes((node.tag || "").toLowerCase());
+						if (isTextElement) {
+							if (!insideTextElement && hasLegacyBrText(node.children)) candidates.push(node);
+							walk(node.children, true);
+							return;
+						}
+						walk(node.children, insideTextElement);
+					});
+				walk(etch.blocks.getTree(), false);
+			} catch (_) {
+				return; // Etch may be between two renders/sync states.
+			}
+			if (!candidates.length) return;
+
+			legacyBrRepairInFlight = true;
+			try {
+				const templates = findTemplates(etch);
+				let changed = false;
+				let selectedReplacementId = null;
+				let selectedId = null;
+				try { selectedId = etch.blocks.getSelectedId(); } catch (_) { /* optional */ }
+
+				for (const candidate of candidates) {
+					let fresh;
+					try { fresh = etch.blocks.getJson(candidate.id); } catch (_) { continue; }
+					if (!fresh || !hasLegacyBrText(fresh.children)) continue;
+
+					const authoring = toAuthoring(fresh);
+					authoring.children = normalizeLegacyBrChildren(authoring.children, templates);
+					const newId = etch.blocks.replace(fresh.id, authoring);
+					changed = true;
+					if (selectedId && containsBlockId(fresh, selectedId)) selectedReplacementId = newId;
+				}
+
+				if (!changed) return;
+				await etch.saveAsync();
+				if (selectedReplacementId) {
+					try { etch.blocks.select(selectedReplacementId); } catch (_) { /* optional */ }
+				}
+				log("Normalized legacy literal <br> line break(s) returned by Gutenberg.");
+			} catch (e) {
+				err("Legacy line-break repair failed:", apiErrInfo(e));
+			} finally {
+				legacyBrRepairInFlight = false;
+			}
+		}
+
+		let nestedGbRepairInFlight = false;
+
+		function isEtchTextElementNode(node) {
+			return !!(
+				node &&
+				node.type === "etch/element" &&
+				ETCH_TEXT_TAGS.includes((node.tag || "").toLowerCase())
+			);
+		}
+
+		function canContainBlockPassthrough(node) {
+			if (!node || node.type !== "etch/element") return false;
+			const tag = (node.tag || "").toLowerCase();
+			return !ETCH_TEXT_TAGS.includes(tag) && !INLINE_TAGS.includes(tag);
+		}
+
+		function hasDirectBlockPassthrough(children) {
+			return (children || []).some(isBlockGbPassthrough);
+		}
+
+		/**
+		 * Split a native Etch text element around block-level Gutenberg
+		 * passthrough children. The returned sequence can be inserted into the
+		 * text element's parent without producing a block inside <p>.
+		 */
+		function splitTextElementAroundGb(children, textElement) {
+			const result = [];
+			let textChildren = [];
+			const flushTextElement = () => {
+				if (!textChildren.length) return;
+				result.push({ ...textElement, children: textChildren });
+				textChildren = [];
+			};
+
+			(children || []).forEach((child) => {
+				if (isBlockGbPassthrough(child)) {
+					flushTextElement();
+					result.push(child);
+				} else {
+					textChildren.push(child);
+				}
+			});
+			flushTextElement();
+			return result;
+		}
+
+		/** Recursively promote nested block passthroughs while preserving order. */
+		function promoteNestedGbChildren(children) {
+			let changed = false;
+			const out = [];
+
+			(children || []).forEach((child) => {
+				if (isEtchTextElementNode(child) && hasDirectBlockPassthrough(child.children)) {
+					out.push(...splitTextElementAroundGb(child.children, child));
+					changed = true;
+					return;
+				}
+
+				const copy = { ...child };
+				if (canContainBlockPassthrough(child) && Array.isArray(child.children)) {
+					const nested = promoteNestedGbChildren(child.children);
+					copy.children = nested.children;
+					changed = changed || nested.changed;
+				}
+				out.push(copy);
+			});
+
+			return { children: out, changed };
+		}
+
+		/**
+		 * Find the native Etch containers that currently contain an invalid
+		 * block-level Gutenberg passthrough inside a text element. Only the
+		 * outermost affected container is returned; its whole subtree is fixed
+		 * in one replace() call so nested replacements cannot overwrite each
+		 * other.
+		 */
+		function collectNestedGbRepairParents(nodes, parent, depth, out, seen) {
+			(nodes || []).forEach((node) => {
+				if (
+					isEtchTextElementNode(node) &&
+					hasDirectBlockPassthrough(node.children) &&
+					canContainBlockPassthrough(parent) &&
+					parent.id &&
+					!seen.has(parent.id)
+				) {
+					seen.add(parent.id);
+					out.push({ block: parent, depth });
+				}
+
+				if (Array.isArray(node.children)) {
+					collectNestedGbRepairParents(node.children, node, depth + 1, out, seen);
+				}
+			});
+		}
+
+		async function promoteNestedGbPassthroughs() {
+			if (nestedGbRepairInFlight || session || popup.isOpen()) return;
+
+			let tree;
+			try {
+				tree = etch.blocks.getTree();
+			} catch (_) {
+				return;
+			}
+
+		const candidates = [];
+		collectNestedGbRepairParents(tree, null, 0, candidates, new Set());
+		if (!candidates.length) return;
+
+		/* If an affected container contains another affected container, the
+		   outer replace() will repair both. */
+		candidates.sort((a, b) => a.depth - b.depth);
+		const parents = [];
+		candidates.forEach((candidate) => {
+			if (!parents.some((selected) => containsBlockId(selected.block, candidate.block.id))) {
+				parents.push(candidate);
+			}
+		});
+
+		nestedGbRepairInFlight = true;
+		try {
+			let changed = false;
+			let selectedReplacementId = null;
+			let selectedId = null;
+			try { selectedId = etch.blocks.getSelectedId(); } catch (_) { /* optional */ }
+
+			for (const candidate of parents) {
+				let fresh;
+				try { fresh = etch.blocks.getJson(candidate.block.id); } catch (_) { continue; }
+				if (!fresh) continue;
+
+				const authoring = toAuthoring(fresh);
+				const repaired = promoteNestedGbChildren(authoring.children);
+				if (!repaired.changed) continue;
+				authoring.children = repaired.children;
+
+				const newId = etch.blocks.replace(fresh.id, authoring);
+				changed = true;
+				if (selectedId && containsBlockId(fresh, selectedId)) selectedReplacementId = newId;
+			}
+
+			if (!changed) return;
+			await etch.saveAsync();
+			if (selectedReplacementId) {
+				try { etch.blocks.select(selectedReplacementId); } catch (_) { /* optional */ }
+			}
+			log("Promoted nested Gutenberg passthrough block(s) to the Etch container level.");
+		} catch (e) {
+			err("Nested Gutenberg passthrough repair failed:", apiErrInfo(e));
+		} finally {
+			nestedGbRepairInFlight = false;
+		}
+		}
+
+		let backgroundRepairInFlight = false;
+		async function runBackgroundRepairs() {
+			if (backgroundRepairInFlight || session || popup.isOpen()) return;
+			backgroundRepairInFlight = true;
+			try {
+				await repairLegacyEtchBreaks();
+				await promoteNestedGbPassthroughs();
+			} finally {
+				backgroundRepairInFlight = false;
+			}
+		}
+
+		/* ---------------------------------------------------------------- */
+		/* Optional Gutenberg → native Etch conversion                     */
+		/* ---------------------------------------------------------------- */
+
+		let conversionNotice = null;
+		let conversionInFlight = false;
+		let currentConversionCandidate = null;
+		const dismissedConversionKeys = new Set();
+
+		/**
+		 * Only standalone core/paragraph passthroughs are offered here.
+		 * Paragraphs inside a Gutenberg container remain owned by Gutenberg;
+		 * converting the outer container would otherwise destroy its structure.
+		 */
+		function isConvertibleGbParagraph(node) {
+			return !!(
+				node &&
+				node.type === "etch/passthrough" &&
+				node.gutenbergBlock &&
+				node.gutenbergBlock.blockName === "core/paragraph" &&
+				(!node.gutenbergBlock.innerBlocks || !node.gutenbergBlock.innerBlocks.length) &&
+				parseOuter(node.gutenbergBlock.innerHTML)
+			);
+		}
+
+		function collectConvertibleGbParagraphs() {
+			const out = [];
+			let tree;
+			try { tree = etch.blocks.getTree(); } catch (_) { return out; }
+
+			const walk = (nodes, insidePassthrough) => (nodes || []).forEach((node) => {
+				if (node.type === "etch/passthrough") {
+					if (!insidePassthrough && isConvertibleGbParagraph(node)) out.push(node);
+					/* Nested Gutenberg blocks are part of the wrapper's block JSON,
+					   not standalone Etch nodes, so do not descend into them. */
+					return;
+				}
+				walk(node.children, insidePassthrough);
+			});
+			walk(tree, false);
+			return out;
+		}
+
+		function conversionKey(block) {
+			const gb = block && block.gutenbergBlock;
+			return [
+				block && block.id,
+				gb && gb.blockName,
+				gb && gb.innerHTML,
+			].join("|");
+		}
+
+		function conversionSummary(block) {
+			try {
+				const outer = parseOuter(block.gutenbergBlock.innerHTML);
+				const text = outer ? normText(outer.textContent) : "";
+				if (text) return text.length > 90 ? text.slice(0, 87) + "…" : text;
+			} catch (_) { /* optional */ }
+			return "Empty Gutenberg paragraph";
+		}
+
+		function getNativeElementAttributes(element) {
+			const attributes = {};
+			if (!element) return attributes;
+			for (const attr of element.attributes) {
+				if (attr.name === "class") {
+					const cls = attr.value.split(/\s+/).filter((x) => x && !/^etch-/.test(x));
+					if (cls.length) attributes.class = cls.join(" ");
+				} else {
+					attributes[attr.name] = attr.value;
+				}
+			}
+			return attributes;
+		}
+
+		function gbParagraphToEtchElement(block, templates) {
+			const outer = parseOuter(block.gutenbergBlock.innerHTML);
+			if (!outer) throw new Error("Gutenberg paragraph markup could not be parsed.");
+			if (!templates || !templates.elTpl) {
+				throw new Error("No native Etch text element template is available.");
+			}
+			return {
+				...baseFrom(templates.elTpl),
+				type: "etch/element",
+				tag: "p",
+				attributes: getNativeElementAttributes(outer),
+				children: htmlToChildren(outer, templates),
+			};
+		}
+
+		function buildConversionNotice() {
+			const root = document.createElement("div");
+			root.className = "eppe-convert-notice";
+			root.hidden = true;
+			root.innerHTML = `
+				<div class="eppe-convert-title">Gutenberg paragraph found</div>
+				<div class="eppe-convert-message">Convert this block to a native Etch text element?</div>
+				<div class="eppe-convert-summary"></div>
+				<div class="eppe-convert-actions">
+					<button type="button" class="eppe-convert-primary">Convert to Etch</button>
+					<button type="button" class="eppe-convert-secondary">Keep as Gutenberg</button>
+				</div>
+			`;
+			const notice = {
+				root,
+				title: root.querySelector(".eppe-convert-title"),
+				message: root.querySelector(".eppe-convert-message"),
+				summary: root.querySelector(".eppe-convert-summary"),
+				primary: root.querySelector(".eppe-convert-primary"),
+				secondary: root.querySelector(".eppe-convert-secondary"),
+			};
+			notice.primary.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				void convertCurrentGbParagraph();
+			});
+			notice.secondary.addEventListener("click", (e) => {
+				e.preventDefault();
+				e.stopPropagation();
+				dismissCurrentGbParagraph();
+			});
+			document.body.appendChild(root);
+			return notice;
+		}
+
+		function refreshConversionNotice() {
+			if (!conversionNotice) return;
+			if (session || popup.isOpen() || conversionInFlight || backgroundRepairInFlight) {
+				conversionNotice.root.hidden = true;
+				return;
+			}
+
+			const candidates = collectConvertibleGbParagraphs();
+			const candidate = candidates.find((block) => !dismissedConversionKeys.has(conversionKey(block)));
+			if (!candidate) {
+				currentConversionCandidate = null;
+				conversionNotice.root.hidden = true;
+				return;
+			}
+
+			const key = conversionKey(candidate);
+			currentConversionCandidate = { id: candidate.id, key };
+			const remaining = candidates.filter((block) => !dismissedConversionKeys.has(conversionKey(block))).length;
+			conversionNotice.title.textContent = remaining > 1
+				? `${remaining} Gutenberg paragraphs found`
+				: "Gutenberg paragraph found";
+			conversionNotice.message.textContent = remaining > 1
+				? "Convert the next block to a native Etch text element?"
+				: "Convert this block to a native Etch text element?";
+			conversionNotice.summary.textContent = conversionSummary(candidate);
+			conversionNotice.primary.disabled = false;
+			conversionNotice.secondary.disabled = false;
+			conversionNotice.root.hidden = false;
+		}
+
+		function dismissCurrentGbParagraph() {
+			if (!currentConversionCandidate) return;
+			dismissedConversionKeys.add(currentConversionCandidate.key);
+			currentConversionCandidate = null;
+			refreshConversionNotice();
+		}
+
+		async function convertCurrentGbParagraph() {
+			if (conversionInFlight || !currentConversionCandidate) return;
+			const requested = currentConversionCandidate;
+			conversionInFlight = true;
+			conversionNotice.primary.disabled = true;
+			conversionNotice.secondary.disabled = true;
+			conversionNotice.message.textContent = "Converting this block to Etch…";
+			try {
+				const fresh = etch.blocks.getJson(requested.id);
+				if (!isConvertibleGbParagraph(fresh)) {
+					currentConversionCandidate = null;
+					return;
+				}
+				const converted = gbParagraphToEtchElement(fresh, findTemplates(etch));
+				const newId = etch.blocks.replace(fresh.id, converted);
+				await etch.saveAsync();
+				try { etch.blocks.select(newId); } catch (_) { /* optional */ }
+				currentConversionCandidate = null;
+				log("Converted a standalone Gutenberg paragraph to a native Etch text element.");
+				toast(document, "Gutenberg paragraph converted to an Etch text element.", false);
+				refreshPreviewBurst();
+			} catch (e) {
+				err("Gutenberg paragraph conversion failed:", apiErrInfo(e));
+				conversionNotice.message.textContent = "Conversion failed — the Gutenberg block was left unchanged.";
+				conversionNotice.summary.textContent = apiErrInfo(e);
+				conversionNotice.primary.disabled = false;
+				conversionNotice.secondary.disabled = false;
+			} finally {
+				conversionInFlight = false;
+				refreshConversionNotice();
+			}
+		}
+
+		conversionNotice = buildConversionNotice();
+
 		function buildPopup() {
 			const panel = document.createElement("div");
 			panel.className = "eppe-panel";
@@ -1630,49 +2282,138 @@
 					<button class="eppe-close" title="Close">&times;</button>
 				</div>
 				<div class="eppe-toolbar">
-					<button class="eppe-btn" data-cmd="bold" title="Bold (strong)">B</button>
-					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic (em)">I</button>
-					<button class="eppe-btn" data-cmd="superscript" title="Superscript">x&sup2;</button>
-					<button class="eppe-btn" data-cmd="subscript" title="Subscript">x&#8322;</button>
-					<select class="eppe-select eppe-weight" title="font-weight">
-						<option value="">Wt</option>
-						<option value="300">300</option>
-						<option value="400">400</option>
-						<option value="500">500</option>
-						<option value="600">600</option>
-						<option value="700">700</option>
-						<option value="800">800</option>
-					</select>
-					<label class="eppe-btn eppe-colorlbl" title="Text color" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
+					<button class="eppe-btn" data-cmd="bold" title="Bold — make selected text bold">B</button>
+					<button class="eppe-btn eppe-i" data-cmd="italic" title="Italic — slant selected text">I</button>
+					<button class="eppe-btn" data-cmd="strikeThrough" title="Strikethrough — cross out selected text" style="text-decoration:line-through;">S</button>
+					<button class="eppe-btn" data-cmd="superscript" title="Superscript — raise selected text">x&sup2;</button>
+					<button class="eppe-btn" data-cmd="subscript" title="Subscript — lower selected text">x&#8322;</button>
 					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
-						<button class="eppe-btn eppe-varbtn" title="Theme color variable">var</button>
+						<button class="eppe-btn eppe-wtbtn eppe-hasmenu" title="Font weight — choose the weight of selected text" aria-label="Font weight"><span class="eppe-wt-a eppe-wt-thin">A</span><span class="eppe-wt-a eppe-wt-bold">A</span><svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<div class="eppe-wt-results"></div>
+					</div>
+					<label class="eppe-btn eppe-colorlbl" title="Text color — choose a color for selected text" style="display:inline-flex;align-items:center;gap:4px;cursor:pointer;">A<input type="color" class="eppe-color" value="#000000" aria-label="Text color" style="width:20px;height:16px;padding:0;border:none;background:none;cursor:pointer;" /></label>
+					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
+						<button class="eppe-btn eppe-varbtn eppe-hasmenu" title="Theme color — apply a design-system token (e.g. ACSS)">var<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
 						<div class="eppe-var-results"></div>
 					</div>
-					<button class="eppe-btn eppe-linkbtn" title="Add link">&#128279;</button>
-					<button class="eppe-btn" data-cmd="unlink" title="Remove link">&#128279;&#10060;</button>
-					<button class="eppe-btn eppe-clear" title="Clear formatting">T&#8339;</button>
+					<button class="eppe-btn eppe-linkbtn eppe-icon-btn" title="Link — add or edit a link" aria-label="Add / edit link">${LINK_ICON_SVG}</button>
+					<button class="eppe-btn eppe-icon-btn" data-cmd="unlink" title="Remove link — remove the link from selected text" aria-label="Remove link">${UNLINK_ICON_SVG}</button>
+					<div class="eppe-varwrap" style="position:relative;display:inline-flex;">
+						<button class="eppe-btn eppe-charbtn eppe-hasmenu" title="Insert — line break, soft hyphen or non-breaking space">&para;<svg class="eppe-caret" width="8" height="5" viewBox="0 0 8 5" fill="currentColor" aria-hidden="true"><path d="M0 0 L4 5 L8 0 Z"/></svg></button>
+						<div class="eppe-char-results"></div>
+					</div>
+					<button class="eppe-btn eppe-clear" title="Clear formatting — remove formatting from selected text">T&#8339;</button>
+					<button class="eppe-btn eppe-history" data-history="undo" title="Undo — revert the last change (Cmd/Ctrl+Z)" aria-label="Undo" disabled>&#8617;</button>
+					<button class="eppe-btn eppe-history" data-history="redo" title="Redo — repeat an undone change (Cmd/Ctrl+Shift+Z)" aria-label="Redo" disabled>&#8618;</button>
 				</div>
 				<div class="eppe-linkrow" style="position:relative;">
-					<input type="text" placeholder="https://… or search pages, posts &amp; media" autocomplete="off" />
-					<button class="eppe-btn eppe-linkset">Apply</button>
+					<div class="eppe-link-primary">
+						<input class="eppe-link-url" type="text" placeholder="https://… or search pages, posts &amp; media" autocomplete="off" aria-label="Link URL" />
+						<button class="eppe-btn eppe-linkoptions" type="button" aria-expanded="false" aria-controls="eppe-link-options">Options</button>
+						<div class="eppe-link-actions">
+							<button class="eppe-btn eppe-linkset">Apply</button>
+							<button class="eppe-btn eppe-linkcancel" type="button">Cancel</button>
+						</div>
+					</div>
+					<div class="eppe-link-options" id="eppe-link-options" hidden>
+						<input class="eppe-link-title" type="text" placeholder="Title (optional)" autocomplete="off" aria-label="Link title" />
+						<select class="eppe-link-target" aria-label="Link target">
+							<option value="">Default tab</option>
+							<option value="_self">Same tab</option>
+							<option value="_blank">New tab</option>
+							<option value="_parent">Parent frame</option>
+							<option value="_top">Top frame</option>
+						</select>
+						<input class="eppe-link-rel" type="text" placeholder="rel (optional)" autocomplete="off" aria-label="Link relationship" />
+					</div>
 					<div class="eppe-tb-results"></div>
+				</div>
+				<div class="eppe-conflict" role="alert" hidden>
+					<span class="eppe-conflict-message">This text changed outside the editor.</span>
+					<button class="eppe-btn eppe-conflict-reload">Reload latest</button>
+					<button class="eppe-btn eppe-conflict-overwrite">Keep mine</button>
 				</div>
 				<div class="eppe-editor" contenteditable="true" spellcheck="true"></div>
 				<div class="eppe-foot">
 					<span class="eppe-status">Ready</span>
-					<button class="eppe-cancel" title="Discard (Esc) – clicking outside saves">Close</button>
+					<button class="eppe-cancel" title="Discard changes (Esc)">Discard</button>
+					<button class="eppe-save eppe-closebtn" title="Save changes and close">Close</button>
 				</div>
 			`;
 			document.body.appendChild(panel);
+
+			/* Replace browser-native title hints with consistent, readable toolbar tooltips. */
+			function installToolbarTooltips() {
+				const tooltip = document.createElement("div");
+				tooltip.className = "eppe-tooltip";
+				tooltip.setAttribute("role", "tooltip");
+				tooltip.hidden = true;
+				document.body.appendChild(tooltip);
+				let timer = null;
+				let active = null;
+
+				const hide = () => {
+					clearTimeout(timer);
+					timer = null;
+					active = null;
+					tooltip.hidden = true;
+					tooltip.classList.remove("open");
+				};
+				const show = (target) => {
+					if (active !== target) return;
+					tooltip.textContent = target.dataset.eppeTooltip || "";
+					tooltip.hidden = false;
+					tooltip.classList.add("open");
+					const r = target.getBoundingClientRect();
+					const tr = tooltip.getBoundingClientRect();
+					let top = r.bottom + 8;
+					if (top + tr.height > window.innerHeight - 8) top = r.top - tr.height - 8;
+					let left = r.left + (r.width - tr.width) / 2;
+					left = Math.max(8, Math.min(left, window.innerWidth - tr.width - 8));
+					tooltip.style.left = Math.round(left) + "px";
+					tooltip.style.top = Math.round(Math.max(8, top)) + "px";
+				};
+				const schedule = (target) => {
+					if (!target.dataset.eppeTooltip) return;
+					hide();
+					active = target;
+					timer = setTimeout(() => show(target), 360);
+				};
+
+				panel.querySelectorAll(".eppe-toolbar [title]").forEach((target) => {
+					target.dataset.eppeTooltip = target.getAttribute("title");
+					target.removeAttribute("title");
+					target.addEventListener("pointerenter", () => schedule(target));
+					target.addEventListener("pointerleave", hide);
+					target.addEventListener("focus", () => schedule(target));
+					target.addEventListener("blur", hide);
+				});
+			}
+			installToolbarTooltips();
 
 			const $ = (sel) => panel.querySelector(sel);
 			const editor = $(".eppe-editor");
 			const status = $(".eppe-status");
 			const linkRow = $(".eppe-linkrow");
-			const linkInput = linkRow.querySelector("input");
-			const st = { mode: null, blockId: null, passthroughId: null, path: null, savedRange: null, originalHtml: "", saving: false, mirrorEl: null, mirrorOriginal: null };
+			const linkInput = linkRow.querySelector(".eppe-link-url");
+			const linkOptionsBtn = linkRow.querySelector(".eppe-linkoptions");
+			const linkOptions = linkRow.querySelector(".eppe-link-options");
+			const linkTitleInput = linkRow.querySelector(".eppe-link-title");
+			const linkTargetSelect = linkRow.querySelector(".eppe-link-target");
+			const linkRelInput = linkRow.querySelector(".eppe-link-rel");
+			const conflictRow = $(".eppe-conflict");
+			const conflictReload = $(".eppe-conflict-reload");
+			const conflictOverwrite = $(".eppe-conflict-overwrite");
+			const linkCancel = $(".eppe-linkcancel");
+			const st = {
+				mode: null, blockId: null, passthroughId: null, path: null,
+				savedRange: null, originalHtml: "", saving: false,
+				mirrorEl: null, mirrorOriginal: null, editingLink: null,
+				history: [], historyIndex: -1, historyTimer: null,
+				historyRestoring: false, conflict: false,
+			};
 
-			/* Live-Vorschau: Popup-Inhalt in den Canvas-Knoten spiegeln (nur visuell) */
+			/* Live preview: mirror the popup content into the canvas node (visual only) */
 			function liveMirror() {
 				if (!st.mirrorEl) return;
 				try {
@@ -1681,13 +2422,134 @@
 					tmp.innerHTML = editor.innerHTML;
 					sanitizeEditorHtml(tmp);
 					if (st.mirrorEl.innerHTML !== tmp.innerHTML) st.mirrorEl.innerHTML = tmp.innerHTML;
-				} catch (_) { /* Vorschau optional */ }
+				} catch (_) { /* preview is optional */ }
 			}
 
 			const setStatus = (msg, cls) => {
 				status.textContent = msg;
 				status.className = "eppe-status" + (cls ? " " + cls : "");
 			};
+
+			function comparableHtml(html) {
+				const probe = document.createElement("div");
+				probe.innerHTML = html || "";
+				return probe.innerHTML;
+			}
+
+			function persistedEditorHtml() {
+				try {
+					if (st.mode === "gb") {
+						const fresh = etch.blocks.getJson(st.blockId);
+						const outer = parseOuter(fresh.gutenbergBlock.innerHTML);
+						return outer ? outer.innerHTML : "";
+					}
+					if (st.mode === "gbnested") {
+						const fresh = etch.blocks.getJson(st.passthroughId);
+						const target = nestedBlockAt(fresh.gutenbergBlock, st.path);
+						const outer = target && parseOuter(target.innerHTML);
+						return outer ? outer.innerHTML : "";
+					}
+					if (st.mode === "etch") {
+						const fresh = etch.blocks.getJson(st.blockId);
+						return childrenToHtml(fresh.children) || "";
+					}
+				} catch (_) { /* the block may be mid-replacement */ }
+				return null;
+			}
+
+			function hasExternalChange() {
+				const current = persistedEditorHtml();
+				return current !== null && comparableHtml(current) !== comparableHtml(st.originalHtml);
+			}
+
+			function updateHistoryButtons() {
+				const undo = panel.querySelector('[data-history="undo"]');
+				const redo = panel.querySelector('[data-history="redo"]');
+				if (undo) undo.disabled = st.historyIndex <= 0;
+				if (redo) redo.disabled = st.historyIndex < 0 || st.historyIndex >= st.history.length - 1;
+			}
+
+			function resetHistory() {
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.history = [editor.innerHTML];
+				st.historyIndex = 0;
+				updateHistoryButtons();
+			}
+
+			function recordHistory(immediate) {
+				if (st.historyRestoring || !st.mode || (st.selMark && st.selMark.isConnected)) return;
+				if (!immediate) {
+					clearTimeout(st.historyTimer);
+					st.historyTimer = setTimeout(() => recordHistory(true), 350);
+					return;
+				}
+				st.historyTimer = null;
+				const html = editor.innerHTML;
+				if (st.history[st.historyIndex] === html) {
+					updateHistoryButtons();
+					return;
+				}
+				st.history = st.history.slice(0, st.historyIndex + 1);
+				st.history.push(html);
+				if (st.history.length > 80) st.history.shift();
+				st.historyIndex = st.history.length - 1;
+				updateHistoryButtons();
+			}
+
+			function applyHistory(index, label) {
+				if (index < 0 || index >= st.history.length || index === st.historyIndex) return;
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.historyRestoring = true;
+				unmarkSelection(false);
+				st.historyIndex = index;
+				editor.innerHTML = st.history[index];
+				st.historyRestoring = false;
+				updateHistoryButtons();
+				editor.focus();
+				saveRange();
+				liveMirror();
+				setStatus(label + ".");
+			}
+
+			function undo() {
+				if (st.historyTimer) recordHistory(true);
+				applyHistory(st.historyIndex - 1, "Undid last change");
+			}
+
+			function redo() {
+				if (st.historyTimer) recordHistory(true);
+				applyHistory(st.historyIndex + 1, "Redid change");
+			}
+
+			function showConflict() {
+				st.conflict = true;
+				conflictRow.hidden = false;
+				setStatus("Conflict: text changed outside the editor.", "error");
+			}
+
+			function hideConflict() {
+				st.conflict = false;
+				conflictRow.hidden = true;
+			}
+
+			function reloadLatest() {
+				const latest = persistedEditorHtml();
+				if (latest === null) {
+					setStatus("Could not reload the latest text.", "error");
+					return;
+				}
+				unmarkSelection(false);
+				editor.innerHTML = latest;
+				st.originalHtml = editor.innerHTML;
+				resetHistory();
+				hideConflict();
+				liveMirror();
+				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
+				editor.focus();
+				setStatus("Latest text reloaded.");
+			}
 
 			/* Popup nah am zu bearbeitenden Text platzieren (statt unten rechts) */
 			function positionPopup(node) {
@@ -1702,8 +2564,8 @@
 				const pw = panel.offsetWidth || 460;
 				const ph = panel.offsetHeight || 300;
 				let top = r.bottom + 12;
-				if (top + ph > window.innerHeight - 8) top = r.top - ph - 12;   // sonst darüber
-				if (top < 8) top = Math.max(8, window.innerHeight - ph - 8);     // sonst unten klemmen
+				if (top + ph > window.innerHeight - 8) top = r.top - ph - 12;   // otherwise above
+				if (top < 8) top = Math.max(8, window.innerHeight - ph - 8);     // otherwise clamp to bottom
 				let left = r.left;
 				left = Math.max(8, Math.min(left, window.innerWidth - pw - 8));
 				panel.style.left = left + "px";
@@ -1711,6 +2573,10 @@
 			}
 
 			function open(target) {
+				/* A selection marker can still exist when the selected block changes
+				   while the popup is open. Remove it before replacing the editor DOM. */
+				unmarkSelection(false);
+				st.savedRange = null;
 				st.mode = target.mode;
 				st.blockId = target.block ? target.block.id : null;
 				st.passthroughId = null;
@@ -1739,17 +2605,27 @@
 				}
 				setStatus("Ready");
 				linkRow.style.display = "none";
-				panel.style.display = "block";
+				setLinkOptionsOpen(false);
+				conflictRow.hidden = true;
+				panel.style.display = "flex";
 				st.originalHtml = editor.innerHTML;
-				/* Canvas-Knoten für Live-Vorschau merken */
+				st.editingLink = null;
+				st.conflict = false;
+				resetHistory();
+				linkInput.value = "";
+				linkTitleInput.value = "";
+				linkTargetSelect.value = "";
+				linkRelInput.value = "";
+				/* Remember the canvas node for live preview */
 				st.mirrorEl = target.mirrorEl || null;
 				st.mirrorOriginal = st.mirrorEl ? st.mirrorEl.innerHTML : null;
-				activeMirrorEl = st.mirrorEl; // vor Vorschau-Abgleich schützen
-				positionPopup(st.mirrorEl);   // nah am Text platzieren
+				activeMirrorEl = st.mirrorEl; // protect from preview reconciliation
+				positionPopup(st.mirrorEl);   // position near the text
 				editor.focus();
 			}
 			function close(discard) {
-				/* Beim Verwerfen die Live-Vorschau im Canvas zurücksetzen */
+				unmarkSelection(false);
+				/* On discard, reset the live preview in the canvas */
 				if (discard && st.mirrorEl && st.mirrorOriginal != null) {
 					try { if (st.mirrorEl.isConnected) st.mirrorEl.innerHTML = st.mirrorOriginal; } catch (_) { /* ignore */ }
 				}
@@ -1759,32 +2635,58 @@
 				st.passthroughId = null;
 				st.path = null;
 				st.originalHtml = "";
+				st.editingLink = null;
+				st.savedRange = null;
+				clearTimeout(st.historyTimer);
+				st.historyTimer = null;
+				st.history = [];
+				st.historyIndex = -1;
+				st.conflict = false;
+				conflictRow.hidden = true;
 				st.mirrorEl = null;
 				st.mirrorOriginal = null;
 				activeMirrorEl = null;
 			}
-			/* Live-Vorschau bei jeder Änderung im Editor aktualisieren */
+			/* Update the live preview on every change in the editor */
 			new MutationObserver(() => liveMirror()).observe(editor, {
 				childList: true, subtree: true, characterData: true, attributes: true,
 			});
-			/* Schließen (verwerfen) robust: schon auf mousedown reagieren */
-			$(".eppe-close").addEventListener("mousedown", (e) => {
-				e.preventDefault();
-				e.stopPropagation();
-				close(true);
-			});
-			$(".eppe-cancel").addEventListener("click", () => close(true));
+			/* Closing (X, Close button, click outside) SAVES changes;
+			   discarding is the explicit "Discard" button or Esc. */
+				$(".eppe-close").addEventListener("mousedown", (e) => {
+					e.preventDefault();
+					e.stopPropagation();
+					saveOrClose();
+				});
+				$(".eppe-closebtn").addEventListener("click", () => saveOrClose());
+				$(".eppe-cancel").addEventListener("click", () => close(true));
+				panel.querySelectorAll("[data-history]").forEach((btn) => {
+					btn.addEventListener("mousedown", (e) => e.preventDefault());
+					btn.addEventListener("click", () => {
+						if (btn.dataset.history === "undo") undo();
+						else redo();
+					});
+				});
+				conflictReload.addEventListener("mousedown", (e) => e.preventDefault());
+				conflictReload.addEventListener("click", reloadLatest);
+				conflictOverwrite.addEventListener("mousedown", (e) => e.preventDefault());
+				conflictOverwrite.addEventListener("click", () => {
+					hideConflict();
+					doSave(true);
+				});
 
-			/* Auto-Speichern beim Klick außerhalb des Popups (Top-Fenster + Canvas) */
+			/* Auto-save on click outside the popup (top window + canvas) */
 			const onOutsideDown = (e) => {
-				if (panel.style.display !== "block" || st.saving) return;
+				if (panel.style.display === "none" || panel.style.display === "" || st.saving) return;
 				const t = e.target;
 				try { if (t && panel.contains(t)) return; } catch (_) { /* cross-doc */ }
+				/* the edit button handles its own toggle (open/close) */
+				try { if (t && t.closest && t.closest(".eppe-editbtn")) return; } catch (_) { /* ignore */ }
 				if (editor.innerHTML !== st.originalHtml) doSave();
 				else close();
 			};
 			document.addEventListener("mousedown", onOutsideDown, true);
-			// zusätzlich in allen Canvas-iframes lauschen
+			// also listen in all canvas iframes
 			setInterval(() => {
 				iframeDocs().forEach((d) => {
 					if (!d.__eppePopupOutside) {
@@ -1797,8 +2699,8 @@
 			(() => {
 				const head = $(".eppe-head");
 				let drag = null;
-				/* Pointer-Events + setPointerCapture: Drag bleibt flüssig, auch
-				   wenn der Cursor über das Canvas-iframe fährt */
+				/* Pointer events + setPointerCapture: dragging stays smooth even
+				   when the cursor moves over the canvas iframe */
 				head.addEventListener("pointerdown", (e) => {
 					if (e.target.closest(".eppe-close")) return;
 					const r = panel.getBoundingClientRect();
@@ -1837,15 +2739,87 @@
 				sel.addRange(st.savedRange);
 				return true;
 			};
+
+			/* While a dropdown is open the editor loses focus and the browser
+			   hides the selection. Wrap it in a temporary highlight span so the
+			   user still sees what they are about to format. */
+			function markSelection() {
+				if (st.selMark && st.selMark.isConnected) return;
+				if (!st.savedRange || st.savedRange.collapsed) return;
+				const span = document.createElement("span");
+				span.className = "eppe-selhl";
+				const r = st.savedRange.cloneRange();
+				try {
+					r.surroundContents(span);
+				} catch (_) {
+					try {
+						span.appendChild(r.extractContents());
+						r.insertNode(span);
+					} catch (__) { return; }
+				}
+				st.selMark = span;
+			}
+
+			function unmarkSelection(restore) {
+				const span = st.selMark;
+				st.selMark = null;
+				if (!span || !span.isConnected) return;
+				const parent = span.parentNode;
+				const first = span.firstChild;
+				const last = span.lastChild;
+				while (span.firstChild) parent.insertBefore(span.firstChild, span);
+				span.remove();
+				if (first && last) {
+					try {
+						const r = document.createRange();
+						r.setStartBefore(first);
+						r.setEndAfter(last);
+						st.savedRange = r;
+						if (restore) {
+							const sel = window.getSelection();
+							sel.removeAllRanges();
+							sel.addRange(r);
+						}
+					} catch (_) { /* keep previous range */ }
+				}
+			}
+
 			editor.addEventListener("keyup", saveRange);
 			editor.addEventListener("mouseup", saveRange);
+			editor.addEventListener("input", () => {
+				recordHistory(false);
+				if (!st.saving && !st.conflict && editor.innerHTML !== st.originalHtml) {
+					setStatus("Unsaved changes.");
+				}
+			});
+			/* Paste always as plain text (strip Word/Pages formatting) */
+			editor.addEventListener("paste", (e) => {
+				handlePlainPaste(e, document);
+				saveRange();
+				recordHistory(false);
+			});
 
 			panel.querySelectorAll("[data-cmd]").forEach((btn) => {
 				btn.addEventListener("mousedown", (e) => e.preventDefault());
 				btn.addEventListener("click", () => {
 					editor.focus();
+					/* Unlink also works with just the caret inside a link */
+					if (btn.dataset.cmd === "unlink") {
+						saveRange();
+						const a = linkAtSelection();
+						if (a && (!st.savedRange || st.savedRange.collapsed)) {
+							while (a.firstChild) a.parentNode.insertBefore(a.firstChild, a);
+								a.remove();
+								editor.normalize();
+								saveRange();
+								recordHistory(true);
+								setStatus("Link removed.");
+								return;
+						}
+					}
 					document.execCommand(btn.dataset.cmd, false, null);
 					saveRange();
+					recordHistory(true);
 				});
 			});
 
@@ -1864,7 +2838,7 @@
 					span.appendChild(range.extractContents());
 					range.insertNode(span);
 				}
-				/* 1) Gleiche Eigenschaft aus INNEREN Elementen entfernen */
+				/* 1) Remove the same property from INNER elements */
 				span.querySelectorAll("*").forEach((d) => {
 					if (d.style && d.style.getPropertyValue(cssProp)) d.style.removeProperty(cssProp);
 					if (d.tagName === "SPAN" && !d.getAttribute("style") && !d.className) {
@@ -1872,8 +2846,8 @@
 						d.remove();
 					}
 				});
-				/* 2) Gleiche Eigenschaft aus VORFAHREN entfernen, die exakt denselben
-				   Text umschließen (so lösen sich gestapelte Farb-Spans auf). */
+				/* 2) Remove the same property from ANCESTORS that wrap exactly the
+				   same text (this collapses stacked color spans). */
 				const selText = normText(span.textContent);
 				let anc = span.parentNode;
 				while (anc && anc !== editor && anc.nodeType === 1 &&
@@ -1887,31 +2861,95 @@
 					}
 					anc = next;
 				}
+				coalesceSpans(editor); // combine font-weight + color into ONE span
 				editor.normalize();
 				saveRange();
+				recordHistory(true);
 				setStatus(label + " applied.");
 			};
 
-			$(".eppe-weight").addEventListener("change", (e) => {
-				const weight = e.target.value;
-				e.target.value = "";
-				if (weight) applyPopupSpanStyle("fontWeight", weight, "font-weight " + weight);
+			/* --- Font weight (icon button with a selection list) --- */
+			const wtBtn = $(".eppe-wtbtn");
+			const wtResults = $(".eppe-wt-results");
+			const WEIGHTS = [
+				["300", "Light"], ["400", "Regular"], ["500", "Medium"],
+				["600", "Semibold"], ["700", "Bold"], ["800", "Extrabold"],
+			];
+			wtBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			wtBtn.addEventListener("click", () => {
+				if (wtResults.classList.contains("open")) { wtResults.className = "eppe-wt-results"; unmarkSelection(true); return; }
+				saveRange();
+				if (!st.savedRange || st.savedRange.collapsed) {
+					setStatus("Please select the text here in the editing field.", "error");
+					return;
+				}
+				wtResults.innerHTML = WEIGHTS.map(([v, l]) =>
+					`<div class="eppe-var-row" data-wt="${v}">` +
+					`<span class="eppe-var-name" style="font-weight:${v}">${l} · ${v}</span></div>`
+				).join("");
+				wtResults.className = "eppe-wt-results open";
+				markSelection();
+				wtResults.querySelectorAll(".eppe-var-row").forEach((row) => {
+					row.addEventListener("mousedown", (e) => {
+						e.preventDefault();
+						const v = row.getAttribute("data-wt");
+						unmarkSelection(true);
+						applyPopupSpanStyle("fontWeight", v, "font-weight " + v);
+						wtResults.className = "eppe-wt-results";
+					});
+				});
+			});
+
+			/* --- Insert menu (line break, soft hyphen, non-breaking space) --- */
+			const charBtn = $(".eppe-charbtn");
+			const charResults = $(".eppe-char-results");
+			const CHAR_ITEMS = [
+				["br", "&#8629; Line break", "Shift+Enter"],
+				["shy", "Soft hyphen", "invisible"],
+				["nbsp", "Non-breaking space", "invisible"],
+			];
+			charBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			charBtn.addEventListener("click", () => {
+				if (charResults.classList.contains("open")) { charResults.className = "eppe-char-results"; unmarkSelection(true); return; }
+				saveRange();
+				charResults.innerHTML = CHAR_ITEMS.map(([k, label, hint]) =>
+					`<div class="eppe-var-row" data-char="${k}">` +
+					`<span class="eppe-var-name">${label}</span>` +
+					`<span class="eppe-char-hint">${hint}</span></div>`
+				).join("");
+				charResults.className = "eppe-char-results open";
+				markSelection();
+				charResults.querySelectorAll(".eppe-var-row").forEach((row) => {
+					row.addEventListener("mousedown", (e) => {
+						e.preventDefault();
+						unmarkSelection(true);
+						const k = row.getAttribute("data-char");
+						if (!restoreRange()) editor.focus();
+						if (k === "br") document.execCommand("insertHTML", false, "<br>");
+						else if (k === "shy") document.execCommand("insertText", false, "\u00AD");
+							else document.execCommand("insertText", false, "\u00A0");
+							charResults.className = "eppe-char-results";
+							saveRange();
+							recordHistory(true);
+							setStatus(k === "br" ? "Line break inserted." : k === "shy" ? "Soft hyphen inserted." : "Non-breaking space inserted.");
+					});
+				});
 			});
 
 			$(".eppe-color").addEventListener("mousedown", (e) => e.stopPropagation());
 			$(".eppe-color").addEventListener("input", (e) => applyPopupSpanStyle("color", e.target.value, "Color"));
 
-			/* --- Theme-Farbvariablen (Tokens) --- */
+			/* --- Theme color variables (tokens) --- */
 			const varBtn = $(".eppe-varbtn");
 			const varResults = $(".eppe-var-results");
-			let tokenNames = null; // erst beim ersten Öffnen geladen
+			let tokenNames = null; // loaded on first open
 
 			function ensureTokens() {
 				if (tokenNames) return;
 				const map = collectAllVars();
 				tokenNames = colorTokenNames(map);
-				/* Alle Variablen auf das Panel setzen, damit var(--x) auch im
-				   Popup (Top-Dokument) auflösbar ist – für Swatch & Live-Vorschau */
+				/* Set all variables on the panel so var(--x) is resolvable in the
+				   popup (top document) too – for swatches & live preview */
 				for (const [n, v] of Object.entries(map)) {
 					try { panel.style.setProperty(n, v); } catch (_) { /* ignore */ }
 				}
@@ -1962,6 +3000,7 @@
 					row.addEventListener("mousedown", (e) => {
 						e.preventDefault();
 						const name = row.getAttribute("data-var");
+						unmarkSelection(true);
 						applyPopupSpanStyle("color", "var(" + name + ")", "Color " + name);
 						varResults.className = "eppe-var-results";
 					});
@@ -1971,12 +3010,13 @@
 
 			varBtn.addEventListener("mousedown", (e) => e.preventDefault());
 			varBtn.addEventListener("click", () => {
-				if (varResults.classList.contains("open")) { varResults.className = "eppe-var-results"; return; }
-				saveRange(); // Auswahl vor dem Öffnen sichern
+				if (varResults.classList.contains("open")) { varResults.className = "eppe-var-results"; unmarkSelection(true); return; }
+				saveRange(); // save the selection before opening
 				if (!st.savedRange || st.savedRange.collapsed) {
 					setStatus("Please select the text here in the editing field.", "error");
 					return;
 				}
+				markSelection();
 				renderTokens("");
 			});
 
@@ -2014,35 +3054,114 @@
 				if (q.length < 2) { renderResults(null); return; }
 				searchTimer = setTimeout(async () => {
 					try { renderResults(await searchInternal(q)); }
-					catch (e) { log("Interne Suche fehlgeschlagen:", String(e)); renderResults(null); }
+					catch (e) { log("Internal search failed:", String(e)); renderResults(null); }
 				}, 250);
 			};
 
+			/* Link at the current selection/caret (for editing an existing link) */
+			const linkAtSelection = () => {
+				const r = st.savedRange;
+				if (!r) return null;
+				const findLink = (node) => {
+					let n = node && node.nodeType === 3 ? node.parentNode : node;
+					while (n && n !== editor) {
+						if (n.nodeType === 1 && n.tagName === "A") return n;
+						n = n.parentNode;
+					}
+					return null;
+				};
+				const start = findLink(r.startContainer);
+				const end = findLink(r.endContainer);
+				if (start && start === end) return start;
+				return findLink(r.commonAncestorContainer);
+			};
+
+			const applyLinkAttributes = (a) => {
+				if (!a) return;
+				const title = linkTitleInput.value.trim();
+				const target = linkTargetSelect.value;
+				const rel = linkRelInput.value.trim().split(/\s+/).filter(Boolean);
+				if (target === "_blank" && !rel.includes("noopener")) rel.push("noopener");
+				if (title) a.setAttribute("title", title);
+				else a.removeAttribute("title");
+				if (target) a.setAttribute("target", target);
+				else a.removeAttribute("target");
+				if (rel.length) a.setAttribute("rel", [...new Set(rel)].join(" "));
+				else a.removeAttribute("rel");
+			};
+
+			const setLinkOptionsOpen = (open) => {
+				linkOptions.hidden = !open;
+				linkOptionsBtn.setAttribute("aria-expanded", open ? "true" : "false");
+				linkOptionsBtn.classList.toggle("open", open);
+			};
+
+			const closeLinkEditor = (restoreSelection) => {
+				linkRow.style.display = "none";
+				renderResults(null);
+				setLinkOptionsOpen(false);
+				st.editingLink = null;
+				if (restoreSelection) {
+					const hadMarker = st.selMark && st.selMark.isConnected;
+					unmarkSelection(true);
+					if (!hadMarker) restoreRange();
+				}
+			};
+
+			linkOptionsBtn.addEventListener("mousedown", (e) => e.preventDefault());
+			linkOptionsBtn.addEventListener("click", () => {
+				setLinkOptionsOpen(linkOptions.hidden);
+			});
 			$(".eppe-linkbtn").addEventListener("mousedown", (e) => e.preventDefault());
 			$(".eppe-linkbtn").addEventListener("click", () => {
 				saveRange();
-				if (!st.savedRange || st.savedRange.collapsed) {
+				const a = linkAtSelection();
+				/* Caret inside an existing link → edit it; otherwise a selection is required */
+				if ((!st.savedRange || st.savedRange.collapsed) && !a) {
 					setStatus("Please select the text here in the editing field (not in the canvas).", "error");
 					return;
 				}
+				st.editingLink = a || null;
 				linkRow.style.display = "flex";
-				linkInput.value = "";
+				if (!a) markSelection();
+				linkInput.value = a ? (a.getAttribute("href") || "") : "";
+				linkTitleInput.value = a ? (a.getAttribute("title") || "") : "";
+				linkTargetSelect.value = a ? (a.getAttribute("target") || "") : "";
+				linkRelInput.value = a ? (a.getAttribute("rel") || "") : "";
+				setLinkOptionsOpen(Boolean(a && (linkTitleInput.value || linkTargetSelect.value || linkRelInput.value)));
 				renderResults(null);
 				linkInput.focus();
+				if (linkInput.value) linkInput.select();
+				setStatus(a ? "Editing existing link." : "Ready");
 			});
 			const applyLink = () => {
 				const url = linkInput.value.trim();
 				if (!url) return;
+				/* Editing an existing link: update href and optional attributes */
+				if (st.editingLink && st.editingLink.isConnected) {
+					st.editingLink.setAttribute("href", url);
+					applyLinkAttributes(st.editingLink);
+					closeLinkEditor(false);
+					recordHistory(true);
+					setStatus("Link updated: " + url);
+					editor.focus();
+					saveRange();
+					return;
+				}
+				unmarkSelection(true);
 				if (!restoreRange()) { setStatus("Selection lost – please select the text again.", "error"); return; }
 				editor.focus();
 				restoreRange();
 				document.execCommand("createLink", false, url);
-				linkRow.style.display = "none";
-				renderResults(null);
-				setStatus("Link added: " + url);
 				saveRange();
+				applyLinkAttributes(linkAtSelection());
+				closeLinkEditor(false);
+				recordHistory(true);
+				setStatus("Link added: " + url);
 			};
 			$(".eppe-linkset").addEventListener("click", applyLink);
+			linkCancel.addEventListener("mousedown", (e) => e.preventDefault());
+			linkCancel.addEventListener("click", () => closeLinkEditor(true));
 			linkInput.addEventListener("input", () => doSearch(linkInput.value.trim()));
 			linkInput.addEventListener("keydown", (e) => {
 				const rows = Array.from(linkResults.querySelectorAll(".eppe-tb-result:not(.eppe-tb-empty)"));
@@ -2060,9 +3179,42 @@
 					applyLink();
 				} else if (e.key === "Escape") {
 					if (linkResults.classList.contains("open")) renderResults(null);
-					else linkRow.style.display = "none";
+					else closeLinkEditor(true);
 				}
 			});
+
+			/* Keep the dropdown buttons' "open" state (caret + highlight) in sync
+			   with their panels, no matter how they were opened or closed */
+			[[wtBtn, wtResults], [varBtn, varResults], [charBtn, charResults]].forEach(([b, r]) => {
+				new MutationObserver(() => b.classList.toggle("open", r.classList.contains("open")))
+					.observe(r, { attributes: true, attributeFilter: ["class"] });
+			});
+
+			/* Close open dropdowns (weight, tokens, link results) when clicking
+			   anywhere else inside the popup */
+			panel.addEventListener("mousedown", (e) => {
+				const t = e.target;
+				if (!t || !t.closest) return;
+				if (wtResults.classList.contains("open") &&
+					!t.closest(".eppe-wt-results") && !t.closest(".eppe-wtbtn")) {
+					wtResults.className = "eppe-wt-results";
+					unmarkSelection(false);
+				}
+				if (charResults.classList.contains("open") &&
+					!t.closest(".eppe-char-results") && !t.closest(".eppe-charbtn")) {
+					charResults.className = "eppe-char-results";
+					unmarkSelection(false);
+				}
+				if (varResults.classList.contains("open") &&
+					!t.closest(".eppe-var-results") && !t.closest(".eppe-varbtn")) {
+					varResults.className = "eppe-var-results";
+					unmarkSelection(false);
+				}
+				if (linkResults.classList.contains("open") &&
+					!t.closest(".eppe-tb-results") && !t.closest(".eppe-linkrow")) {
+					renderResults(null);
+				}
+			}, true);
 
 			$(".eppe-clear").addEventListener("mousedown", (e) => e.preventDefault());
 			$(".eppe-clear").addEventListener("click", () => {
@@ -2080,11 +3232,18 @@
 				stripEmptyInline(editor);
 				editor.normalize();
 				saveRange();
+				recordHistory(true);
 				setStatus("Formatting cleared.");
 			});
 
-			async function doSave() {
+			async function doSave(force) {
 				if (!st.mode || st.saving) return;
+				unmarkSelection(false);
+				if (!force && editor.innerHTML !== st.originalHtml && hasExternalChange()) {
+					showConflict();
+					return;
+				}
+				hideConflict();
 				st.saving = true;
 				setStatus("Saving…");
 				try {
@@ -2099,19 +3258,26 @@
 						try { etch.blocks.select(newId); } catch (_) { /* optional */ }
 					}
 					st.saving = false;
-					close(); // nach Auto-Speichern schließen
+					close(); // close after auto-save
 					try { runPreviewScan(); } catch (_) { /* sofortige Aktualisierung */ }
 					refreshPreviewBurst(); // + zeitversetzt (Etch rendert asynchron)
 				} catch (e) {
 					err("Saving failed:", apiErrInfo(e));
-					setStatus("Error: " + apiErrInfo(e), "error");
+					setStatus("Save failed — use Close to retry. " + apiErrInfo(e), "error");
 					st.saving = false;
 				}
 			}
 
 			/* Cmd/Ctrl+Enter speichert, Esc verwirft */
 			editor.addEventListener("keydown", (e) => {
-				if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
+				if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "z") {
+					e.preventDefault();
+					if (e.shiftKey) redo();
+					else undo();
+				} else if ((e.metaKey || e.ctrlKey) && !e.altKey && e.key.toLowerCase() === "y") {
+					e.preventDefault();
+					redo();
+				} else if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
 					e.preventDefault();
 					if (editor.innerHTML !== st.originalHtml) doSave(); else close(true);
 				} else if (e.key === "Escape") {
@@ -2120,11 +3286,18 @@
 				}
 			});
 
-			return { open, close, isOpen: () => panel.style.display === "block" };
+			/* Close like a click-outside: save if changed, otherwise just close */
+			function saveOrClose() {
+				if (panel.style.display === "none" || panel.style.display === "" || st.saving) return;
+				if (editor.innerHTML !== st.originalHtml) doSave();
+				else close();
+			}
+
+			return { open, close, saveOrClose, isOpen: () => panel.style.display !== "none" && panel.style.display !== "" };
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Launcher (nur noch Popup-Fallback)                                */
+		/* Launcher (popup fallback only)                                    */
 		/* ---------------------------------------------------------------- */
 
 		const launcher = document.createElement("button");
@@ -2154,7 +3327,7 @@
 		}
 
 		/* ---------------------------------------------------------------- */
-		/* Auswahl-Polling                                                   */
+		/* Selection polling                                                 */
 		/* ---------------------------------------------------------------- */
 
 		setInterval(() => {
@@ -2164,7 +3337,7 @@
 			let selId = null;
 			try {
 				selId = etch.blocks.getSelectedId();
-			} catch (_) { /* Übergangszustand */ }
+			} catch (_) { /* transitional state */ }
 
 			if (!selId) {
 				if (lastSelected !== null) {
@@ -2178,9 +3351,9 @@
 			const selChanged = selId !== lastSelected;
 			lastSelected = selId;
 
-			/* Button steht bereits am richtigen Text → nichts zu tun.
-			   Fehlt er (z. B. weil das Canvas beim letzten Versuch mitten im
-			   Re-Render war), wird die Suche bei jedem Tick wiederholt. */
+			/* Button is already next to the right text → nothing to do.
+			   If it's missing (e.g. because the canvas was mid re-render on the
+			   last attempt), the search is retried on every tick. */
 			if (!selChanged && editBtn) return;
 
 			const target = resolveTarget(selId);
@@ -2192,7 +3365,7 @@
 			}
 			launcherTarget = target;
 
-			/* Canvas-Knoten suchen → Edit-Button direkt am Text */
+			/* Find the canvas node → edit button right next to the text */
 			const node = target.mode === "etch"
 				? findCanvasNodeForEtch(target.block)
 				: findPreviewNodeForGb(target.block);
@@ -2211,12 +3384,12 @@
 		}, POLL_MS);
 
 		/* ---------------------------------------------------------------- */
-		/* Vorschau-Loop                                                     */
+		/* Preview loop                                                      */
 		/* ---------------------------------------------------------------- */
 
 		setInterval(() => {
 			try {
-				iframeDocs().forEach(installDblClickGuard); // Link-Bug-Workaround aktiv halten
+				iframeDocs().forEach(installDblClickGuard); // keep the link-bug workaround active
 			} catch (_) { /* optional */ }
 			if (session) return;
 			try {
@@ -2241,16 +3414,66 @@
 			position: fixed; right: 20px; bottom: 64px; z-index: 999999;
 			display: none; align-items: center; gap: 8px;
 			background: #7c3aed; color: #fff; border: none; border-radius: 8px;
-			padding: 10px 16px; font: 600 13px/1 system-ui, sans-serif;
+			padding: 10px 16px; font: 600 13px/1 var(--e-font-interface, Inter, system-ui, sans-serif);
 			cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35);
 		}
 		.eppe-launcher:hover { background: #6d28d9; }
+		.eppe-launcher,
+		.eppe-convert-notice,
+		.eppe-convert-notice *,
+		.eppe-tooltip,
+		.eppe-panel,
+		.eppe-panel *,
+		.eppe-editbtn {
+			font-family: var(--e-font-interface, Inter, system-ui, sans-serif) !important;
+		}
+		.eppe-editbtn {
+			font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif) !important;
+		}
+		.eppe-convert-notice {
+			position: fixed; top: 20px; right: 20px; z-index: 2147483647;
+			width: min(420px, calc(100vw - 40px)); padding: 14px 16px;
+			background: #1e1e24; color: #f4f4f6; border: 1px solid #7c3aed;
+			border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
+			font: 13px/1.45 var(--e-font-interface, Inter, system-ui, sans-serif);
+		}
+		.eppe-convert-notice[hidden] { display: none !important; }
+		.eppe-convert-title { font-size: 14px; font-weight: 700; color: #fff; }
+		.eppe-convert-message { margin-top: 3px; color: #d8d8df; }
+		.eppe-convert-summary {
+			margin-top: 9px; padding: 7px 9px; border-radius: 6px;
+			background: #292932; color: #bdbdc8; white-space: nowrap;
+			overflow: hidden; text-overflow: ellipsis;
+		}
+		.eppe-convert-actions { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 12px; }
+		.eppe-convert-actions button {
+			border-radius: 6px; padding: 7px 10px; font: 600 12px/1.2 var(--e-font-interface, Inter, system-ui, sans-serif);
+			cursor: pointer;
+		}
+		.eppe-convert-primary { background: #7c3aed; color: #fff; border: 1px solid #7c3aed; }
+		.eppe-convert-primary:hover { background: #6d28d9; border-color: #6d28d9; }
+		.eppe-convert-secondary { background: transparent; color: #c7c7d0; border: 1px solid #4a4a58; }
+		.eppe-convert-secondary:hover { color: #fff; border-color: #747484; }
+		.eppe-convert-actions button:disabled { opacity: .5; cursor: default; }
+		.eppe-tooltip {
+			position: fixed; z-index: 2147483647; max-width: 250px;
+			padding: 7px 9px; background: #111116; color: #f4f4f6;
+			border: 1px solid #4a4a58; border-radius: 6px;
+			box-shadow: 0 5px 18px rgba(0,0,0,.5);
+			font: 11px/1.35 var(--e-font-interface, Inter, system-ui, sans-serif); text-align: center;
+			pointer-events: none; opacity: 0; transform: translateY(-2px);
+			transition: opacity .12s ease, transform .12s ease;
+		}
+		.eppe-tooltip[hidden] { display: none; }
+		.eppe-tooltip.open { opacity: 1; transform: translateY(0); }
 		.eppe-panel {
 			position: fixed; right: 20px; bottom: 64px; z-index: 1000000;
-			width: 460px; max-width: calc(100vw - 40px);
+			width: 640px; max-width: calc(100vw - 40px);
+			min-width: 420px; min-height: 260px;
 			background: #1e1e24; color: #e5e5ea; border: 1px solid #3a3a44;
 			border-radius: 10px; box-shadow: 0 8px 32px rgba(0,0,0,.5);
-			font: 13px/1.5 system-ui, sans-serif; display: none;
+			font: 13px/1.5 var(--e-font-interface, Inter, system-ui, sans-serif); display: none;
+			flex-direction: column; resize: both; overflow: hidden;
 		}
 		.eppe-panel * { box-sizing: border-box; }
 		.eppe-head {
@@ -2268,12 +3491,25 @@
 			display: flex; flex-wrap: wrap; gap: 3px; padding: 8px 10px;
 			border-bottom: 1px solid #3a3a44; align-items: center;
 		}
+		.eppe-toolbar .eppe-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			height: 30px; min-height: 30px;
+		}
 		.eppe-btn {
 			background: #2a2a32; color: #e5e5ea; border: 1px solid #3a3a44;
 			border-radius: 6px; padding: 5px 10px; cursor: pointer;
-			font: 600 12px/1 system-ui, sans-serif; min-width: 30px;
+			font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif); min-width: 30px;
+		}
+		.eppe-btn.eppe-icon-btn {
+			display: inline-flex; align-items: center; justify-content: center;
+			width: 42px; min-width: 42px; height: 30px; padding: 5px 8px;
+		}
+		.eppe-btn .eppe-icon {
+			display: block; width: 19px; height: 19px; flex: none;
 		}
 		.eppe-btn:hover { background: #3a3a46; }
+		.eppe-history { font-size: 18px; font-weight: 400; line-height: 1; padding: 5px 8px; }
+		.eppe-history:disabled, .eppe-history:disabled:hover { opacity: .35; cursor: default; background: #2a2a32; }
 		.eppe-btn.eppe-i { font-style: italic; font-weight: 400; }
 		.eppe-select {
 			background: #2a2a32; color: #e5e5ea; border: 1px solid #3a3a44;
@@ -2281,13 +3517,27 @@
 			width: auto; max-width: 62px;
 		}
 		.eppe-btn { white-space: nowrap; }
-		.eppe-var-results {
+		.eppe-var-results, .eppe-wt-results, .eppe-char-results {
 			display: none; position: absolute; left: 0; top: 100%; margin-top: 4px;
 			width: 240px; max-height: 260px; overflow: auto; z-index: 10;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 8px;
 			box-shadow: 0 8px 28px rgba(0,0,0,.55);
 		}
-		.eppe-var-results.open { display: block; }
+		.eppe-wt-results { width: 150px; }
+		.eppe-char-results { width: 230px; left: auto; right: 0; }
+		.eppe-var-results.open, .eppe-wt-results.open, .eppe-char-results.open { display: block; }
+		.eppe-char-results .eppe-var-row { justify-content: space-between; }
+		.eppe-char-hint { font-size: 10px; color: #a1a1ab; text-transform: uppercase; letter-spacing: .4px; }
+		/* Buttons that open a dropdown: caret indicator + active state */
+		.eppe-hasmenu { display: inline-flex; align-items: center; gap: 4px; }
+		.eppe-caret { opacity: .55; flex: none; transition: transform .12s ease; }
+		.eppe-hasmenu.open { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+		.eppe-hasmenu.open .eppe-caret { opacity: 1; transform: rotate(180deg); }
+		.eppe-wtbtn { display: inline-flex; align-items: center; justify-content: center; gap: 1px; line-height: 1; }
+		.eppe-wtbtn .eppe-caret { margin-left: 3px; }
+		.eppe-wt-a { font-size: 15px; line-height: 1; }
+		.eppe-wt-thin { font-weight: 100; }
+		.eppe-wt-bold { font-weight: 900; }
 		.eppe-var-filter {
 			width: 100%; box-sizing: border-box; background: #17171c; color: #f4f4f6;
 			border: none; border-bottom: 1px solid #3a3a44; padding: 7px 9px; font-size: 12px; outline: none;
@@ -2309,16 +3559,17 @@
 		.eppe-var-empty { padding: 8px 9px; color: #a1a1ab; font-size: 12px; }
 		.eppe-var-group {
 			position: sticky; top: 32px; background: #17171c; color: #a1a1ab;
-			font: 700 10px/1 system-ui, sans-serif; letter-spacing: .6px; text-transform: uppercase;
+			font: 700 10px/1 var(--e-font-interface, Inter, system-ui, sans-serif); letter-spacing: .6px; text-transform: uppercase;
 			padding: 6px 9px 4px; border-top: 1px solid #2a2a32;
 		}
 		.eppe-editor {
-			min-height: 90px; max-height: 40vh; overflow: auto;
+			flex: 1 1 auto; min-height: 90px; max-height: 60vh; overflow: auto;
 			padding: 12px 14px; outline: none; font-size: 14px; line-height: 1.6;
 			background: #17171c; color: #f4f4f6;
 		}
-		/* Inline-Elemente gegen globales Theme-/ACSS-CSS zurücksetzen,
-		   damit z. B. Links nicht als Block in eine eigene Zeile rutschen */
+		.eppe-panel[style*="height"] .eppe-editor { max-height: none; }
+		/* Reset inline elements against global theme/ACSS CSS
+		   so that e.g. links don't drop onto their own line as blocks */
 		.eppe-editor a, .eppe-editor strong, .eppe-editor em, .eppe-editor span,
 		.eppe-editor u, .eppe-editor s, .eppe-editor mark, .eppe-editor code,
 		.eppe-editor sub, .eppe-editor sup {
@@ -2328,11 +3579,36 @@
 		}
 		.eppe-editor a { color: #a78bfa !important; text-decoration: underline !important; }
 		.eppe-editor a::before, .eppe-editor a::after { content: none !important; }
-		.eppe-linkrow { display: none; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #3a3a44; }
-		.eppe-linkrow input {
-			flex: 1; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
+		/* Temporary highlight so the selection stays visible while a dropdown
+		   is open (the editor loses focus, so the native selection is hidden).
+		   Must come after the inline reset above, which forces a transparent bg. */
+		.eppe-editor span.eppe-selhl { background: rgba(124,58,237,.55) !important; border-radius: 2px; }
+		.eppe-linkrow { display: none; flex-direction: column; gap: 6px; padding: 8px 12px; border-bottom: 1px solid #3a3a44; }
+		.eppe-link-primary {
+			display: grid; grid-template-columns: minmax(0, 1fr) auto auto;
+			gap: 6px; align-items: center;
+		}
+		.eppe-link-options {
+			display: grid; grid-template-columns: minmax(140px, 1.2fr) 110px minmax(120px, 1fr);
+			gap: 6px; align-items: center;
+		}
+		.eppe-link-options[hidden] { display: none; }
+		.eppe-linkrow input, .eppe-linkrow select {
+			min-width: 0; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
 			border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none;
 		}
+		.eppe-linkoptions[aria-expanded="true"] { background: #7c3aed; border-color: #7c3aed; color: #fff; }
+		.eppe-link-actions { display: flex; gap: 6px; }
+		.eppe-link-actions .eppe-btn { flex: 1; }
+		.eppe-linkrow select { cursor: pointer; }
+		.eppe-conflict {
+			display: flex; flex-wrap: wrap; align-items: center; gap: 6px;
+			padding: 8px 12px; border-bottom: 1px solid #3a3a44;
+			background: #332817; color: #fbbf24;
+		}
+		.eppe-conflict[hidden] { display: none !important; }
+		.eppe-conflict-message { flex: 1 1 220px; font-size: 11px; }
+		.eppe-conflict .eppe-btn { padding: 4px 8px; font-size: 11px; }
 		.eppe-linkrow .eppe-tb-results {
 			display: none; position: absolute; left: 12px; right: 12px; top: 100%; margin-top: 3px;
 			background: #1e1e24; border: 1px solid #3a3a44; border-radius: 6px;
@@ -2355,7 +3631,7 @@
 		.eppe-status.error { color: #f87171; }
 		.eppe-save {
 			background: #7c3aed; color: #fff; border: none; border-radius: 6px;
-			padding: 8px 16px; font: 600 12px/1 system-ui, sans-serif; cursor: pointer;
+			padding: 8px 16px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif); cursor: pointer;
 		}
 		.eppe-save:hover { background: #6d28d9; }
 		.eppe-save:disabled { opacity: .5; cursor: default; }
@@ -2364,6 +3640,13 @@
 			border-radius: 6px; padding: 8px 14px; font-size: 12px; cursor: pointer;
 		}
 		.eppe-cancel:hover { color: #fff; }
+		@media (max-width: 720px) {
+			.eppe-panel {
+				width: calc(100vw - 20px); max-width: calc(100vw - 20px);
+				min-width: 0; right: 10px;
+			}
+			.eppe-link-options { grid-template-columns: 1fr; }
+		}
 		`;
 		const style = document.createElement("style");
 		style.id = "eppe-styles";
