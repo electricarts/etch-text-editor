@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v1.0.15
+ * Etch Text Editor v1.0.17
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -21,7 +21,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "1.0.15";
+	const VERSION = "1.0.17";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -33,6 +33,7 @@
 		"core/preformatted": "Preformatted",
 		"core/verse": "Verse",
 	};
+	const CONVERTED_TEXT_LABEL = "Text converted";
 
 	/* Flat, monochrome toolbar icons (kept inline so the editor has no icon dependency). */
 	const LINK_ICON_SVG =
@@ -2157,8 +2158,10 @@
 			if (!templates || !templates.elTpl) {
 				throw new Error("No native Etch text element template is available.");
 			}
+			const base = baseFrom(templates.elTpl);
 			return {
-				...baseFrom(templates.elTpl),
+				...base,
+				context: { ...(base.context || {}), name: CONVERTED_TEXT_LABEL },
 				type: "etch/element",
 				tag: "p",
 				attributes: getNativeElementAttributes(outer),
@@ -2253,6 +2256,9 @@
 				}
 				const converted = gbParagraphToEtchElement(fresh, findTemplates(etch));
 				const newId = etch.blocks.replace(fresh.id, converted);
+				if (typeof etch.blocks.rename === "function") {
+					etch.blocks.rename(newId, CONVERTED_TEXT_LABEL);
+				}
 				await etch.saveAsync();
 				try { etch.blocks.select(newId); } catch (_) { /* optional */ }
 				currentConversionCandidate = null;

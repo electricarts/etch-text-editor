@@ -2,6 +2,12 @@
 
 All notable changes to this project.
 
+## 1.0.17
+- Fixed: converted Gutenberg paragraphs are renamed through Etch's block API after replacement, so `Text converted` appears in the structure panel.
+
+## 1.0.16
+- Changed: manually converted Gutenberg paragraphs are labeled `Text converted` in the Etch tree so they can be distinguished from native Etch text elements.
+
 ## 1.0.15
 - Changed: the Etch `Edit` button now uses 12px text at font-weight 600, enforced inside the canvas iframe so the builder's generic button styles cannot override it.
 
