@@ -29,7 +29,7 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
 - **Clean markup**: multiple inline styles on the same selection are merged into a single `<span>`; empty leftovers are removed; literal `<br>` values returned by Gutenberg are automatically converted into real line breaks.
 - **Resizable, draggable popup**: drag the header to move it, the bottom-right corner to resize; it opens next to the text you're editing.
 - **Toolbar tooltips**: hover over a toolbar button to see what it does; the same hints are available with keyboard focus.
-- **Auto-save**: closing saves — via the X, the Close button or a click outside (also `Cmd/Ctrl+Enter`). Discarding is explicit: the **Discard** button or `Esc`.
+- **Save safety**: the **Close** button, clicking outside or `Cmd/Ctrl+Enter` saves. The X, **Discard** button and `Esc` ask for confirmation before closing without saving.
 - **Undo/redo and save safety**: undo or redo local edits with the toolbar or keyboard shortcuts; external changes are detected before overwriting and save errors leave the editor open for retry.
 - **Sync-safe editing**: Gutenberg blocks stay core blocks while you edit them normally, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
 - **Optional conversion**: standalone Gutenberg `core/paragraph` passthroughs can be converted to native Etch text elements after manual confirmation. Gutenberg paragraphs inside container passthroughs are left untouched.
@@ -58,7 +58,7 @@ If you use a page cache (e.g. LiteSpeed), purge it after updating so the builder
 - Use **Cancel** in the link row (or press `Esc`) to leave link editing without closing the popup.
 - Pasting always inserts plain text; format it afterwards with the toolbar.
 - Use the undo/redo buttons or `Cmd/Ctrl+Z` and `Cmd/Ctrl+Shift+Z` (`Ctrl+Y`) to move through local changes.
-- **Saving**: click outside the popup, use the **Close** button or the X, or press `Cmd/Ctrl+Enter`. **Discarding**: the **Discard** button or `Esc`.
+- **Saving**: click outside the popup, use the **Close** button or press `Cmd/Ctrl+Enter`. The X, **Discard** button and `Esc` ask before closing without saving.
 - When the text changed elsewhere while the popup was open, choose **Reload latest** or **Keep mine** before saving.
 - When a standalone Gutenberg paragraph is detected, choose **Convert to Etch** to turn that block into a native Etch text element, or **Keep as Gutenberg** to leave it unchanged.
 

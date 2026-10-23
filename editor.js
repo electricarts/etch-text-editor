@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v1.0.17
+ * Etch Text Editor v1.0.18
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -21,7 +21,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "1.0.17";
+	const VERSION = "1.0.18";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -2339,6 +2339,16 @@
 					<button class="eppe-btn eppe-conflict-reload">Reload latest</button>
 					<button class="eppe-btn eppe-conflict-overwrite">Keep mine</button>
 				</div>
+				<div class="eppe-unsaved" role="dialog" aria-modal="true" aria-labelledby="eppe-unsaved-title" hidden>
+					<div class="eppe-unsaved-card">
+						<div class="eppe-unsaved-title" id="eppe-unsaved-title">Unsaved changes</div>
+						<div class="eppe-unsaved-message">Close without saving?</div>
+						<div class="eppe-unsaved-actions">
+							<button type="button" class="eppe-unsaved-keep">Keep editing</button>
+							<button type="button" class="eppe-unsaved-discard">Close without saving</button>
+						</div>
+					</div>
+				</div>
 				<div class="eppe-editor" contenteditable="true" spellcheck="true"></div>
 				<div class="eppe-foot">
 					<span class="eppe-status">Ready</span>
@@ -2410,6 +2420,9 @@
 			const conflictRow = $(".eppe-conflict");
 			const conflictReload = $(".eppe-conflict-reload");
 			const conflictOverwrite = $(".eppe-conflict-overwrite");
+			const unsavedPrompt = $(".eppe-unsaved");
+			const unsavedKeep = $(".eppe-unsaved-keep");
+			const unsavedDiscard = $(".eppe-unsaved-discard");
 			const linkCancel = $(".eppe-linkcancel");
 			const st = {
 				mode: null, blockId: null, passthroughId: null, path: null,
@@ -2613,6 +2626,7 @@
 				linkRow.style.display = "none";
 				setLinkOptionsOpen(false);
 				conflictRow.hidden = true;
+				unsavedPrompt.hidden = true;
 				panel.style.display = "flex";
 				st.originalHtml = editor.innerHTML;
 				st.editingLink = null;
@@ -2649,6 +2663,7 @@
 				st.historyIndex = -1;
 				st.conflict = false;
 				conflictRow.hidden = true;
+				unsavedPrompt.hidden = true;
 				st.mirrorEl = null;
 				st.mirrorOriginal = null;
 				activeMirrorEl = null;
@@ -2657,15 +2672,35 @@
 			new MutationObserver(() => liveMirror()).observe(editor, {
 				childList: true, subtree: true, characterData: true, attributes: true,
 			});
-			/* Closing (X, Close button, click outside) SAVES changes;
-			   discarding is the explicit "Discard" button or Esc. */
+			function requestDiscard() {
+				if (panel.style.display === "none" || panel.style.display === "" || st.saving) return;
+				if (editor.innerHTML === st.originalHtml) {
+					close(true);
+					return;
+				}
+				unsavedPrompt.hidden = false;
+				unsavedKeep.focus();
+			}
+
+			function cancelDiscard() {
+				unsavedPrompt.hidden = true;
+				editor.focus();
+			}
+
+			/* The X, Discard and Esc actions ask before discarding changes.
+			   The Close button, click outside and Cmd/Ctrl+Enter save. */
 				$(".eppe-close").addEventListener("mousedown", (e) => {
 					e.preventDefault();
 					e.stopPropagation();
-					saveOrClose();
+					requestDiscard();
 				});
 				$(".eppe-closebtn").addEventListener("click", () => saveOrClose());
-				$(".eppe-cancel").addEventListener("click", () => close(true));
+				$(".eppe-cancel").addEventListener("click", requestDiscard);
+				unsavedKeep.addEventListener("click", cancelDiscard);
+				unsavedDiscard.addEventListener("click", () => {
+					unsavedPrompt.hidden = true;
+					close(true);
+				});
 				panel.querySelectorAll("[data-history]").forEach((btn) => {
 					btn.addEventListener("mousedown", (e) => e.preventDefault());
 					btn.addEventListener("click", () => {
@@ -3288,7 +3323,8 @@
 					if (editor.innerHTML !== st.originalHtml) doSave(); else close(true);
 				} else if (e.key === "Escape") {
 					e.preventDefault();
-					close(true);
+					if (unsavedPrompt.hidden) requestDiscard();
+					else cancelDiscard();
 				}
 			});
 
@@ -3437,7 +3473,7 @@
 			font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif) !important;
 		}
 		.eppe-convert-notice {
-			position: fixed; top: 20px; right: 20px; z-index: 2147483647;
+			position: fixed; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); z-index: 2147483647;
 			width: min(420px, calc(100vw - 40px)); padding: 14px 16px;
 			background: #1e1e24; color: #f4f4f6; border: 1px solid #7c3aed;
 			border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
@@ -3461,6 +3497,26 @@
 		.eppe-convert-secondary { background: transparent; color: #c7c7d0; border: 1px solid #4a4a58; }
 		.eppe-convert-secondary:hover { color: #fff; border-color: #747484; }
 		.eppe-convert-actions button:disabled { opacity: .5; cursor: default; }
+		.eppe-unsaved {
+			position: absolute; inset: 0; z-index: 20; display: flex; align-items: center; justify-content: center;
+			padding: 20px; background: rgba(17,17,22,.78); border-radius: inherit;
+		}
+		.eppe-unsaved[hidden] { display: none !important; }
+		.eppe-unsaved-card {
+			width: min(360px, 100%); padding: 18px; background: #1e1e24;
+			border: 1px solid #7c3aed; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
+		}
+		.eppe-unsaved-title { color: #fff; font-size: 14px; font-weight: 700; }
+		.eppe-unsaved-message { margin-top: 5px; color: #d8d8df; }
+		.eppe-unsaved-actions { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 7px; margin-top: 16px; }
+		.eppe-unsaved-actions button {
+			border-radius: 6px; padding: 7px 10px; font: 600 12px/1.2 var(--e-font-interface, Inter, system-ui, sans-serif);
+			cursor: pointer;
+		}
+		.eppe-unsaved-keep { background: #7c3aed; color: #fff; border: 1px solid #7c3aed; }
+		.eppe-unsaved-keep:hover { background: #6d28d9; border-color: #6d28d9; }
+		.eppe-unsaved-discard { background: transparent; color: #c7c7d0; border: 1px solid #4a4a58; }
+		.eppe-unsaved-discard:hover { color: #fff; border-color: #747484; }
 		.eppe-tooltip {
 			position: fixed; z-index: 2147483647; max-width: 250px;
 			padding: 7px 9px; background: #111116; color: #f4f4f6;

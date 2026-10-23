@@ -2,6 +2,10 @@
 
 All notable changes to this project.
 
+## 1.0.18
+- Added: closing the text editor with the X, Discard or Esc now asks for confirmation when there are unsaved changes; the prompt is in English.
+- Changed: the Gutenberg paragraph conversion notice is centered in the viewport instead of appearing in the top-right corner.
+
 ## 1.0.17
 - Fixed: converted Gutenberg paragraphs are renamed through Etch's block API after replacement, so `Text converted` appears in the structure panel.
 

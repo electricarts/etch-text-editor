@@ -2,7 +2,7 @@
 
 Status note for picking the project back up (new session, new machine, or another developer).
 
-**Current version:** 1.0.17
+**Current version:** 1.0.18
 **Repo:** https://github.com/electricarts/etch-text-editor
 **Local working copy:** `~/Documents/DEV/etch-text-editor`
 **License:** GPL-2.0-or-later · **Author:** Mario Peischl
@@ -77,7 +77,7 @@ Links: type a URL **or** search internal pages/posts/media via the WordPress RES
 
 Behaviour: paste is always plain text; multiple inline styles on one selection merge into a single `<span>`; literal `<br>` values returned by Gutenberg are automatically normalized into real Etch line-break elements; popup is draggable (header) and resizable (bottom-right corner), opens next to the edited text; dropdowns show a caret and highlight while open and close on outside click; the selection stays visibly highlighted while a dropdown is open; toolbar buttons show explanatory hover/focus tooltips.
 
-Saving: closing saves (X, Close button, click outside, Cmd/Ctrl+Enter). Discarding is explicit (Discard button or Esc). External changes are detected before overwriting; save errors keep the popup open for retry.
+Saving: the Close button, click outside and Cmd/Ctrl+Enter save. The X, Discard button and Esc ask for confirmation before discarding unsaved changes. External changes are detected before overwriting; save errors keep the popup open for retry.
 
 ---
 
