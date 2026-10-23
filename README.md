@@ -30,6 +30,7 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
 - **Resizable, draggable popup**: drag the header to move it, the bottom-right corner to resize; it opens next to the text you're editing.
 - **Toolbar tooltips**: hover over a toolbar button to see what it does; the same hints are available with keyboard focus.
 - **Save safety**: the **Close** button, clicking outside or `Cmd/Ctrl+Enter` saves. The X, **Discard** button and `Esc` ask for confirmation before closing without saving.
+- **WordPress Admin updates**: after the first manual installation, published GitHub releases can be detected and installed from the WordPress Plugins screen.
 - **Undo/redo and save safety**: undo or redo local edits with the toolbar or keyboard shortcuts; external changes are detected before overwriting and save errors leave the editor open for retry.
 - **Sync-safe editing**: Gutenberg blocks stay core blocks while you edit them normally, so Etch ⇄ Gutenberg two-way sync is preserved. Writes go through `etch.blocks.replace()` + `etch.saveAsync()`.
 - **Optional conversion**: standalone Gutenberg `core/paragraph` passthroughs can be converted to native Etch text elements after manual confirmation. Gutenberg paragraphs inside container passthroughs are left untouched.
@@ -48,6 +49,8 @@ The plugin loads a script into the Etch builder (for logged-in users who can `ed
 Requirements: WordPress 6.0+, PHP 7.4+, Etch 1.6.x with the Public API enabled.
 
 If you use a page cache (e.g. LiteSpeed), purge it after updating so the builder loads the new script.
+
+The first installation is uploaded manually from the release ZIP. Once a version containing the updater is installed, later published GitHub releases appear as normal WordPress plugin updates. The WordPress server must be able to reach GitHub over HTTPS and write to the plugins directory (or have FTP credentials configured).
 
 ## Usage
 

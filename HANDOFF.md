@@ -2,7 +2,7 @@
 
 Status note for picking the project back up (new session, new machine, or another developer).
 
-**Current version:** 1.0.18
+**Current version:** 1.0.19
 **Repo:** https://github.com/electricarts/etch-text-editor
 **Local working copy:** `~/Documents/DEV/etch-text-editor`
 **License:** GPL-2.0-or-later · **Author:** Mario Peischl
@@ -86,6 +86,8 @@ Saving: the Close button, click outside and Cmd/Ctrl+Enter save. The X, Discard 
 Files in the repo: `etch-text-editor.php`, `editor.js`, `README.md`, `CHANGELOG.md`, `LICENSE`, `.gitignore`, `assets/popup.png` (README screenshot).
 
 `.gitignore` excludes `*.zip` — release ZIPs are attached to GitHub Releases, not committed.
+
+The plugin includes a GitHub-based WordPress Admin updater. It reads the latest published release from `api.github.com`, expects an asset named `etch-text-editor-X.Y.Z.zip`, and supplies that asset to WordPress' plugin upgrader. The repository and release must remain public unless authentication is added. Existing installs older than 1.0.19 need one manual ZIP installation before they can receive later updates through the Admin.
 
 Release steps:
 

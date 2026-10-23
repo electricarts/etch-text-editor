@@ -2,6 +2,10 @@
 
 All notable changes to this project.
 
+## 1.0.19
+- Added: WordPress Admin update checks for published GitHub Releases, including the “Update now” flow and plugin information modal.
+- Added: a short-lived GitHub release cache and a forced refresh when WordPress checks for updates again.
+
 ## 1.0.18
 - Added: closing the text editor with the X, Discard or Esc now asks for confirmation when there are unsaved changes; the prompt is in English.
 - Changed: the Gutenberg paragraph conversion notice is centered in the viewport instead of appearing in the top-right corner.
