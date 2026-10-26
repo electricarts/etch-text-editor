@@ -2,7 +2,7 @@
 
 Status note for picking the project back up (new session, new machine, or another developer).
 
-**Current version:** 1.0.20
+**Current version:** 1.0.21
 **Repo:** https://github.com/electricarts/etch-text-editor
 **Local working copy:** `~/Documents/DEV/etch-text-editor`
 **License:** GPL-2.0-or-later · **Author:** Mario Peischl
@@ -83,7 +83,7 @@ Saving: the Close button, click outside and Cmd/Ctrl+Enter save. The X, Discard 
 
 ## 5. Repo & release workflow
 
-Files in the repo: `etch-text-editor.php`, `editor.js`, `README.md`, `CHANGELOG.md`, `LICENSE`, `.gitignore`, `assets/popup.png` (README screenshot).
+Files in the repo: `etch-text-editor.php`, `editor.js`, `README.md`, `CHANGELOG.md`, `LICENSE`, `.gitignore`, `assets/popup.png` (README screenshot), `assets/icon-128x128.png` (WordPress plugin icon).
 
 `.gitignore` excludes `*.zip` — release ZIPs are attached to GitHub Releases, not committed.
 

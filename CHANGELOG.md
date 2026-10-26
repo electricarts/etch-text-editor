@@ -2,6 +2,11 @@
 
 All notable changes to this project.
 
+## 1.0.21
+- Added: a plugin icon for the WordPress Plugins and Updates screens.
+- Changed: the plugin's accent color is now `#DA2E5C`, including buttons, notices, badges and active states.
+- Changed: the update metadata reports compatibility through WordPress 7.1.3.
+
 ## 1.0.20
 - Fixed: the WordPress Update URI response now includes the required `version` field, so the plugin is recognized as update-supported and the automatic-update link appears in the Plugins screen.
 

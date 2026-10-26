@@ -3,7 +3,7 @@
  * Plugin Name:       Etch Text Editor
  * Plugin URI:        https://github.com/electricarts/etch-text-editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. Normal editing preserves Gutenberg blocks; standalone paragraphs can be manually converted to native Etch text elements.
- * Version:           1.0.20
+ * Version:           1.0.21
  * Author:            Mario Peischl
  * Author URI:        https://electricarts.de
  * Update URI:        https://electricarts.de/etch-text-editor/
@@ -15,10 +15,15 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EPPE_VERSION', '1.0.20' );
+define( 'EPPE_VERSION', '1.0.21' );
+define( 'EPPE_TESTED_WP_VERSION', '7.1.3' );
 define( 'EPPE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'EPPE_GITHUB_REPOSITORY', 'electricarts/etch-text-editor' );
 define( 'EPPE_GITHUB_RELEASE_TRANSIENT', 'eppe_github_latest_release' );
+
+function eppe_plugin_icon_url() {
+	return plugin_dir_url( __FILE__ ) . 'assets/icon-128x128.png';
+}
 
 /**
  * Return the latest published GitHub release that contains the installable ZIP.
@@ -112,10 +117,12 @@ function eppe_build_update_object( $release ) {
 		'new_version'   => $release['version'],
 		'url'           => $release['url'],
 		'package'       => $release['package'],
-		'tested'        => '',
+		'tested'        => EPPE_TESTED_WP_VERSION,
 		'requires'      => '6.0',
 		'requires_php'  => '7.4',
-		'icons'         => array(),
+		'icons'         => array(
+			'1x' => eppe_plugin_icon_url(),
+		),
 		'banners'       => array(),
 		'banners_rtl'   => array(),
 		'compatibility' => new stdClass(),
@@ -218,9 +225,13 @@ function eppe_plugin_information( $result, $action, $args ) {
 		'version'       => $release['version'],
 		'author'        => 'Mario Peischl',
 		'homepage'      => 'https://github.com/' . EPPE_GITHUB_REPOSITORY,
+		'tested'        => EPPE_TESTED_WP_VERSION,
 		'requires'      => '6.0',
 		'requires_php'  => '7.4',
 		'download_link' => $release['package'],
+		'icons'         => array(
+			'1x' => eppe_plugin_icon_url(),
+		),
 		'last_updated'  => '',
 		'sections'      => array(
 			'description' => '<p>Graphical text editing for Etch builder text elements and Gutenberg passthrough blocks.</p>',
