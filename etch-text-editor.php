@@ -3,7 +3,7 @@
  * Plugin Name:       Etch Text Editor
  * Plugin URI:        https://github.com/electricarts/etch-text-editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. Normal editing preserves Gutenberg blocks; standalone paragraphs can be manually converted to native Etch text elements.
- * Version:           1.0.21
+ * Version:           1.0.22
  * Author:            Mario Peischl
  * Author URI:        https://electricarts.de
  * Update URI:        https://electricarts.de/etch-text-editor/
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EPPE_VERSION', '1.0.21' );
+define( 'EPPE_VERSION', '1.0.22' );
 define( 'EPPE_TESTED_WP_VERSION', '7.1.3' );
 define( 'EPPE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'EPPE_GITHUB_REPOSITORY', 'electricarts/etch-text-editor' );

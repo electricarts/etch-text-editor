@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v1.0.21
+ * Etch Text Editor v1.0.22
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -21,7 +21,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "1.0.21";
+	const VERSION = "1.0.22";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -53,7 +53,7 @@
 	const INLINE_TAGS = ["a", "strong", "em", "span", "br", "code", "mark", "s", "sub", "sup", "u"];
 	const ALLOWED_TAGS = INLINE_TAGS.map((t) => t.toUpperCase());
 
-	const log = (...a) => console.log("%c[EtchPPE]", "color:#DA2E5C;font-weight:bold", ...a);
+	const log = (...a) => console.log("%c[EtchPPE]", "color:#ED265A;font-weight:bold", ...a);
 	const err = (...a) => console.error("%c[EtchPPE]", "color:#dc2626;font-weight:bold", ...a);
 	const apiErrInfo = (e) =>
 		e && e.name === "EtchApiError" ? `[${e.code}] ${e.message}` : String(e);
@@ -812,8 +812,8 @@
 			border-radius: 5px; padding: 4px 4px; font-size: 11px; cursor: pointer;
 			pointer-events: auto;
 		}
-		.eppe-tb .eppe-tb-save { background: #DA2E5C; color: #fff; border-color: #DA2E5C; }
-		.eppe-tb .eppe-tb-save:hover { background: #B5224B; }
+		.eppe-tb .eppe-tb-save { background: #ED265A; color: #fff; border-color: #ED265A; }
+		.eppe-tb .eppe-tb-save:hover { background: #C51F4B; }
 		.eppe-tb .eppe-tb-cancel { color: #a1a1ab; }
 		.eppe-tb .eppe-tb-sep { width: 1px; height: 18px; background: #3a3a44; margin: 0 2px; }
 		.eppe-tb-linkrow { display: none; position: relative; width: 100%; gap: 4px; padding-top: 5px; }
@@ -833,7 +833,7 @@
 			border-bottom: 1px solid #2a2a32; display: flex; justify-content: space-between; gap: 8px;
 		}
 		.eppe-tb-result:last-child { border-bottom: none; }
-		.eppe-tb-result:hover, .eppe-tb-result.active { background: #DA2E5C; color: #fff; }
+		.eppe-tb-result:hover, .eppe-tb-result.active { background: #ED265A; color: #fff; }
 		.eppe-tb-result .eppe-tb-rtype { font-size: 10px; opacity: .6; text-transform: uppercase; }
 		.eppe-tb-result .eppe-tb-rtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.eppe-tb-result.eppe-tb-empty { color: #a1a1ab; cursor: default; }
@@ -847,14 +847,14 @@
 		.eppe-toast.error { color: #f87171; }
 		.eppe-editbtn {
 			position: fixed; z-index: 2147483647; display: flex; align-items: center; gap: 7px;
-			background: #DA2E5C; color: #fff; border: none; border-radius: 8px;
+			background: #ED265A; color: #fff; border: none; border-radius: 8px;
 			padding: 9px 16px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif) !important; cursor: pointer;
 			font-family: var(--e-font-interface, Inter, system-ui, sans-serif) !important;
 			box-shadow: 0 4px 16px rgba(0,0,0,.45); pointer-events: auto;
 		}
-		.eppe-editbtn:hover { background: #B5224B; }
+		.eppe-editbtn:hover { background: #C51F4B; }
 		[data-eppe-editing="1"] {
-			outline: 2px solid #DA2E5C !important; outline-offset: 3px;
+			outline: 2px solid #ED265A !important; outline-offset: 3px;
 			border-radius: 2px; cursor: text;
 		}
 		[data-eppe-content] { cursor: pointer; }
@@ -1461,8 +1461,8 @@
 			const badge = doc.createElement("span");
 			badge.textContent = "GB";
 			badge.style.cssText =
-				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#DA2E5C;" +
-				"border:1px solid #DA2E5C;border-radius:4px;padding:1px 4px;margin-right:8px;" +
+				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#ED265A;" +
+				"border:1px solid #ED265A;border-radius:4px;padding:1px 4px;margin-right:8px;" +
 				"vertical-align:middle;letter-spacing:.5px;";
 			el.appendChild(badge);
 			el.appendChild(content);
@@ -1503,8 +1503,8 @@
 			const badge = doc.createElement("span");
 			badge.textContent = "GB " + label.replace(/^core\//, "");
 			badge.style.cssText =
-				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#DA2E5C;" +
-				"border:1px solid #DA2E5C;border-radius:4px;padding:1px 4px;margin-right:8px;" +
+				"display:inline-block;font:700 9px/1.4 var(--e-font-interface, Inter, system-ui, sans-serif);color:#ED265A;" +
+				"border:1px solid #ED265A;border-radius:4px;padding:1px 4px;margin-right:8px;" +
 				"vertical-align:middle;letter-spacing:.5px;";
 			el.appendChild(badge);
 
@@ -3455,11 +3455,11 @@
 		.eppe-launcher {
 			position: fixed; right: 20px; bottom: 64px; z-index: 999999;
 			display: none; align-items: center; gap: 8px;
-			background: #DA2E5C; color: #fff; border: none; border-radius: 8px;
+			background: #ED265A; color: #fff; border: none; border-radius: 8px;
 			padding: 10px 16px; font: 600 13px/1 var(--e-font-interface, Inter, system-ui, sans-serif);
 			cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,.35);
 		}
-		.eppe-launcher:hover { background: #B5224B; }
+		.eppe-launcher:hover { background: #C51F4B; }
 		.eppe-launcher,
 		.eppe-convert-notice,
 		.eppe-convert-notice *,
@@ -3475,7 +3475,7 @@
 		.eppe-convert-notice {
 			position: fixed; top: 50%; left: 50%; right: auto; transform: translate(-50%, -50%); z-index: 2147483647;
 			width: min(420px, calc(100vw - 40px)); padding: 14px 16px;
-			background: #1e1e24; color: #f4f4f6; border: 1px solid #DA2E5C;
+			background: #1e1e24; color: #f4f4f6; border: 1px solid #ED265A;
 			border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
 			font: 13px/1.45 var(--e-font-interface, Inter, system-ui, sans-serif);
 		}
@@ -3492,8 +3492,8 @@
 			border-radius: 6px; padding: 7px 10px; font: 600 12px/1.2 var(--e-font-interface, Inter, system-ui, sans-serif);
 			cursor: pointer;
 		}
-		.eppe-convert-primary { background: #DA2E5C; color: #fff; border: 1px solid #DA2E5C; }
-		.eppe-convert-primary:hover { background: #B5224B; border-color: #B5224B; }
+		.eppe-convert-primary { background: #ED265A; color: #fff; border: 1px solid #ED265A; }
+		.eppe-convert-primary:hover { background: #C51F4B; border-color: #C51F4B; }
 		.eppe-convert-secondary { background: transparent; color: #c7c7d0; border: 1px solid #4a4a58; }
 		.eppe-convert-secondary:hover { color: #fff; border-color: #747484; }
 		.eppe-convert-actions button:disabled { opacity: .5; cursor: default; }
@@ -3504,7 +3504,7 @@
 		.eppe-unsaved[hidden] { display: none !important; }
 		.eppe-unsaved-card {
 			width: min(360px, 100%); padding: 18px; background: #1e1e24;
-			border: 1px solid #DA2E5C; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
+			border: 1px solid #ED265A; border-radius: 10px; box-shadow: 0 8px 28px rgba(0,0,0,.5);
 		}
 		.eppe-unsaved-title { color: #fff; font-size: 14px; font-weight: 700; }
 		.eppe-unsaved-message { margin-top: 5px; color: #d8d8df; }
@@ -3513,8 +3513,8 @@
 			border-radius: 6px; padding: 7px 10px; font: 600 12px/1.2 var(--e-font-interface, Inter, system-ui, sans-serif);
 			cursor: pointer;
 		}
-		.eppe-unsaved-keep { background: #DA2E5C; color: #fff; border: 1px solid #DA2E5C; }
-		.eppe-unsaved-keep:hover { background: #B5224B; border-color: #B5224B; }
+		.eppe-unsaved-keep { background: #ED265A; color: #fff; border: 1px solid #ED265A; }
+		.eppe-unsaved-keep:hover { background: #C51F4B; border-color: #C51F4B; }
 		.eppe-unsaved-discard { background: transparent; color: #c7c7d0; border: 1px solid #4a4a58; }
 		.eppe-unsaved-discard:hover { color: #fff; border-color: #747484; }
 		.eppe-tooltip {
@@ -3593,7 +3593,7 @@
 		/* Buttons that open a dropdown: caret indicator + active state */
 		.eppe-hasmenu { display: inline-flex; align-items: center; gap: 4px; }
 		.eppe-caret { opacity: .55; flex: none; transition: transform .12s ease; }
-		.eppe-hasmenu.open { background: #DA2E5C; border-color: #DA2E5C; color: #fff; }
+		.eppe-hasmenu.open { background: #ED265A; border-color: #ED265A; color: #fff; }
 		.eppe-hasmenu.open .eppe-caret { opacity: 1; transform: rotate(180deg); }
 		.eppe-wtbtn { display: inline-flex; align-items: center; justify-content: center; gap: 1px; line-height: 1; }
 		.eppe-wtbtn .eppe-caret { margin-left: 3px; }
@@ -3609,7 +3609,7 @@
 			display: flex; align-items: center; gap: 8px; padding: 5px 9px; cursor: pointer;
 			font-size: 12px; color: #e5e5ea;
 		}
-		.eppe-var-row:hover { background: #DA2E5C; color: #fff; }
+		.eppe-var-row:hover { background: #ED265A; color: #fff; }
 		.eppe-var-sw {
 			width: 14px; height: 14px; border-radius: 3px; flex: none;
 			border: 1px solid rgba(255,255,255,.25); background-image:
@@ -3639,7 +3639,7 @@
 			float: none !important; width: auto !important; max-width: none !important;
 			background: transparent !important;
 		}
-		.eppe-editor a { color: #a78bfa !important; text-decoration: underline !important; }
+		.eppe-editor a { color: #ED265A !important; text-decoration: underline !important; }
 		.eppe-editor a::before, .eppe-editor a::after { content: none !important; }
 		/* Temporary highlight so the selection stays visible while a dropdown
 		   is open (the editor loses focus, so the native selection is hidden).
@@ -3659,7 +3659,7 @@
 			min-width: 0; background: #17171c; color: #f4f4f6; border: 1px solid #3a3a44;
 			border-radius: 6px; padding: 6px 8px; font-size: 12px; outline: none;
 		}
-		.eppe-linkoptions[aria-expanded="true"] { background: #DA2E5C; border-color: #DA2E5C; color: #fff; }
+		.eppe-linkoptions[aria-expanded="true"] { background: #ED265A; border-color: #ED265A; color: #fff; }
 		.eppe-link-actions { display: flex; gap: 6px; }
 		.eppe-link-actions .eppe-btn { flex: 1; }
 		.eppe-linkrow select { cursor: pointer; }
@@ -3682,7 +3682,7 @@
 			border-bottom: 1px solid #2a2a32; display: flex; justify-content: space-between; gap: 8px;
 		}
 		.eppe-linkrow .eppe-tb-result:last-child { border-bottom: none; }
-		.eppe-linkrow .eppe-tb-result:hover, .eppe-linkrow .eppe-tb-result.active { background: #DA2E5C; color: #fff; }
+		.eppe-linkrow .eppe-tb-result:hover, .eppe-linkrow .eppe-tb-result.active { background: #ED265A; color: #fff; }
 		.eppe-linkrow .eppe-tb-rtype { font-size: 10px; opacity: .6; text-transform: uppercase; }
 		.eppe-linkrow .eppe-tb-rtitle { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 		.eppe-linkrow .eppe-tb-result.eppe-tb-empty { color: #a1a1ab; cursor: default; }
@@ -3692,10 +3692,10 @@
 		.eppe-status.ok { color: #34d399; }
 		.eppe-status.error { color: #f87171; }
 		.eppe-save {
-			background: #DA2E5C; color: #fff; border: none; border-radius: 6px;
+			background: #ED265A; color: #fff; border: none; border-radius: 6px;
 			padding: 8px 16px; font: 600 12px/1 var(--e-font-interface, Inter, system-ui, sans-serif); cursor: pointer;
 		}
-		.eppe-save:hover { background: #B5224B; }
+		.eppe-save:hover { background: #C51F4B; }
 		.eppe-save:disabled { opacity: .5; cursor: default; }
 		.eppe-cancel {
 			background: none; color: #a1a1ab; border: 1px solid #3a3a44;

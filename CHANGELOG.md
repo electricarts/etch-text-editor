@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 1.0.22
+- Changed: the plugin accent color is now `#ED265A`, including the WordPress plugin icon, buttons, notices, badges, links and active states.
+
 ## 1.0.21
 - Added: a plugin icon for the WordPress Plugins and Updates screens.
 - Changed: the plugin's accent color is now `#DA2E5C`, including buttons, notices, badges and active states.
