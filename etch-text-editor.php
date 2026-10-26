@@ -3,7 +3,7 @@
  * Plugin Name:       Etch Text Editor
  * Plugin URI:        https://github.com/electricarts/etch-text-editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. Normal editing preserves Gutenberg blocks; standalone paragraphs can be manually converted to native Etch text elements.
- * Version:           1.0.19
+ * Version:           1.0.20
  * Author:            Mario Peischl
  * Author URI:        https://electricarts.de
  * Update URI:        https://electricarts.de/etch-text-editor/
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EPPE_VERSION', '1.0.19' );
+define( 'EPPE_VERSION', '1.0.20' );
 define( 'EPPE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'EPPE_GITHUB_REPOSITORY', 'electricarts/etch-text-editor' );
 define( 'EPPE_GITHUB_RELEASE_TRANSIENT', 'eppe_github_latest_release' );
@@ -108,6 +108,7 @@ function eppe_build_update_object( $release ) {
 		'id'            => EPPE_PLUGIN_BASENAME,
 		'slug'          => 'etch-text-editor',
 		'plugin'        => EPPE_PLUGIN_BASENAME,
+		'version'       => $release['version'],
 		'new_version'   => $release['version'],
 		'url'           => $release['url'],
 		'package'       => $release['package'],
@@ -136,8 +137,16 @@ function eppe_update_from_github( $update, $plugin_data, $plugin_file, $locales 
 	}
 
 	$release = eppe_github_latest_release();
-	if ( ! is_array( $release ) || ! version_compare( $release['version'], EPPE_VERSION, '>' ) ) {
+	if ( ! is_array( $release ) ) {
 		return false;
+	}
+
+	if ( ! version_compare( $release['version'], EPPE_VERSION, '>' ) ) {
+		$release = array(
+			'version' => EPPE_VERSION,
+			'package' => '',
+			'url'     => 'https://github.com/' . EPPE_GITHUB_REPOSITORY,
+		);
 	}
 
 	return eppe_build_update_object( $release );

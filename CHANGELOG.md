@@ -2,6 +2,9 @@
 
 All notable changes to this project.
 
+## 1.0.20
+- Fixed: the WordPress Update URI response now includes the required `version` field, so the plugin is recognized as update-supported and the automatic-update link appears in the Plugins screen.
+
 ## 1.0.19
 - Added: WordPress Admin update checks for published GitHub Releases, including the “Update now” flow and plugin information modal.
 - Added: a short-lived GitHub release cache and a forced refresh when WordPress checks for updates again.
