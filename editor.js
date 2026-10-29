@@ -1,5 +1,5 @@
 /**
- * Etch Text Editor v1.0.22
+ * Etch Text Editor v1.1.0
  * ------------------------------------
  * Graphical text-editing popup for the Etch builder:
  *  - Gutenberg passthrough blocks (core/paragraph, core/heading, …):
@@ -21,7 +21,7 @@
 (() => {
 	"use strict";
 
-	const VERSION = "1.0.22";
+	const VERSION = "1.1.0";
 	const TIMEOUT_MS = 15000;
 	const POLL_MS = 300;
 	const PREVIEW_MS = 1000;
@@ -52,6 +52,21 @@
 	const ETCH_TEXT_TAGS = ["p", "h1", "h2", "h3", "h4", "h5", "h6", "li", "blockquote", "figcaption"];
 	const INLINE_TAGS = ["a", "strong", "em", "span", "br", "code", "mark", "s", "sub", "sup", "u"];
 	const ALLOWED_TAGS = INLINE_TAGS.map((t) => t.toUpperCase());
+	const GB_ROOT_TAGS = {
+		"core/paragraph": ["p"],
+		"core/heading": ["h1", "h2", "h3", "h4", "h5", "h6"],
+		"core/preformatted": ["pre"],
+		"core/verse": ["pre"],
+	};
+	const SAFE_URL_PROTOCOLS = new Set([
+		"http:", "https:", "mailto:", "tel:", "sms:", "irc:", "ircs:",
+		"xmpp:", "webcal:", "ftp:", "ftps:", "news:", "gopher:", "nntp:", "feed:",
+	]);
+	const SAFE_SPAN_STYLE_PROPERTIES = new Set(["font-weight", "font-style", "color"]);
+	const SAFE_GB_ROOT_STYLE_PROPERTIES = new Set([
+		...SAFE_SPAN_STYLE_PROPERTIES,
+		"text-align", "font-size", "line-height", "text-decoration", "vertical-align", "white-space",
+	]);
 
 	const log = (...a) => console.log("%c[EtchPPE]", "color:#ED265A;font-weight:bold", ...a);
 	const err = (...a) => console.error("%c[EtchPPE]", "color:#dc2626;font-weight:bold", ...a);
@@ -62,6 +77,70 @@
 		String(s).replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
 	const escapeAttr = (s) => escapeHtml(s).replace(/"/g, "&quot;");
 	const normText = (s) => String(s || "").replace(/\s+/g, " ").trim();
+
+	function isSafeHref(value) {
+		const href = String(value || "").trim();
+		if (!href || /[\u0000-\u001f\u007f]/.test(href)) return false;
+		try {
+			/* Use an inert base so relative links remain valid without trusting the
+			   current document's base URL. */
+			const parsed = new URL(href, "https://etch-text-editor.invalid/");
+			if (parsed.origin === "https://etch-text-editor.invalid") return true;
+			return SAFE_URL_PROTOCOLS.has(parsed.protocol.toLowerCase());
+		} catch (_) {
+			return false;
+		}
+	}
+
+	function cleanClassValue(value) {
+		return String(value || "")
+			.split(/\s+/)
+			.filter((x) => x && !/^etch-/.test(x))
+			.join(" ");
+	}
+
+	function sanitizeStyleAttribute(element, allowedProperties) {
+		if (!element.hasAttribute("style")) return;
+		const style = element.style;
+		const safe = [];
+		for (let i = 0; i < style.length; i++) {
+			const property = style[i].toLowerCase();
+			if (!allowedProperties.has(property)) continue;
+			const value = style.getPropertyValue(property).trim();
+			if (!value || /(?:url|expression|javascript|vbscript|data)\s*\(/i.test(value)) continue;
+			safe.push([property, value, style.getPropertyPriority(property)]);
+		}
+		element.removeAttribute("style");
+		safe.forEach(([property, value, priority]) => element.style.setProperty(property, value, priority));
+		if (!element.getAttribute("style")) element.removeAttribute("style");
+	}
+
+	function isExpectedGbRoot(outer, blockName) {
+		const allowed = GB_ROOT_TAGS[blockName];
+		return !!(outer && allowed && allowed.includes((outer.tagName || "").toLowerCase()));
+	}
+
+	function sanitizeGbRootAttributes(outer) {
+		Array.from(outer.attributes).forEach((attr) => {
+			const name = attr.name.toLowerCase();
+			if (name === "class") {
+				const cls = cleanClassValue(attr.value);
+				if (cls) outer.setAttribute("class", cls);
+				else outer.removeAttribute("class");
+				return;
+			}
+			if (name === "id") {
+				if (/^[A-Za-z][A-Za-z0-9_:.\-]*$/.test(attr.value)) outer.setAttribute("id", attr.value);
+				else outer.removeAttribute("id");
+				return;
+			}
+			if (name === "style") {
+				sanitizeStyleAttribute(outer, SAFE_GB_ROOT_STYLE_PROPERTIES);
+				return;
+			}
+			outer.removeAttribute(attr.name);
+		});
+	}
 
 	/* ================================================================== */
 	/* Block-Helpers                                                       */
@@ -442,6 +521,44 @@
 		});
 	}
 
+	function sanitizeInlineElement(child) {
+		const tag = child.tagName;
+		const hadStyle = child.hasAttribute("style");
+		Array.from(child.attributes).forEach((attr) => {
+			const name = attr.name.toLowerCase();
+			const keep =
+				(tag === "A" && ["href", "target", "rel", "title"].includes(name)) ||
+				(tag === "SPAN" && ["style", "class"].includes(name)) ||
+				name === "class";
+			if (!keep || name.startsWith("on")) child.removeAttribute(attr.name);
+		});
+
+		if (child.hasAttribute("class")) {
+			const cls = cleanClassValue(child.getAttribute("class"));
+			if (cls) child.setAttribute("class", cls);
+			else child.removeAttribute("class");
+		}
+		if (tag === "A") {
+			const href = (child.getAttribute("href") || "").trim();
+			if (!isSafeHref(href)) child.removeAttribute("href");
+			const target = child.getAttribute("target");
+			if (target && !["_blank", "_self", "_parent", "_top"].includes(target)) {
+				child.removeAttribute("target");
+			}
+			if (child.getAttribute("target") === "_blank") child.setAttribute("rel", "noopener");
+		}
+		if (tag === "SPAN" && child.hasAttribute("style")) {
+			sanitizeStyleAttribute(child, SAFE_SPAN_STYLE_PROPERTIES);
+		}
+
+		/* A formatting span that only contained unsafe style data should not leave
+		   an empty wrapper in the saved markup. */
+		if (tag === "SPAN" && hadStyle && !child.getAttribute("style") && !child.className) {
+			while (child.firstChild) child.parentNode.insertBefore(child.firstChild, child);
+			child.remove();
+		}
+	}
+
 	function sanitizeEditorHtml(rootEl) {
 		convertLiteralBr(rootEl); // typed/escaped <br> into real line breaks
 		const doc = rootEl.ownerDocument;
@@ -460,38 +577,7 @@
 					child.remove();
 					return;
 				}
-				Array.from(child.attributes).forEach((attr) => {
-					const n = attr.name.toLowerCase();
-					const keep =
-						(child.tagName === "A" && ["href", "target", "rel", "title"].includes(n)) ||
-						(child.tagName === "SPAN" && ["style", "class"].includes(n)) ||
-						n === "class";
-					if (!keep || n.startsWith("on")) child.removeAttribute(attr.name);
-				});
-				/* Remove Etch-internal runtime classes (etch-html-block etc.) */
-				if (child.hasAttribute("class")) {
-					const cls = child.getAttribute("class").split(/\s+/).filter((x) => x && !/^etch-/.test(x));
-					if (cls.length) child.setAttribute("class", cls.join(" "));
-					else child.removeAttribute("class");
-				}
-				if (child.tagName === "A") {
-					const href = (child.getAttribute("href") || "").trim();
-					if (/^javascript:/i.test(href)) child.removeAttribute("href");
-					if (child.getAttribute("target") === "_blank") child.setAttribute("rel", "noopener");
-				}
-				if (child.tagName === "SPAN" && child.hasAttribute("style")) {
-					const fw = child.style.fontWeight;
-					const fs = child.style.fontStyle;
-					const col = child.style.color;
-					child.removeAttribute("style");
-					if (fw) child.style.fontWeight = fw;
-					if (fs) child.style.fontStyle = fs;
-					if (col) child.style.color = col;
-					if (!child.getAttribute("style") && !child.className) {
-						while (child.firstChild) el.insertBefore(child.firstChild, child);
-						child.remove();
-					}
-				}
+				sanitizeInlineElement(child);
 			});
 		};
 		/* remove the temporary selection highlight wrapper, if present */
@@ -503,6 +589,13 @@
 		coalesceSpans(rootEl);   // merge nested spans into one
 		stripEmptyInline(rootEl); // remove empty leftovers (e.g. after removeFormat)
 		return rootEl.innerHTML;
+	}
+
+	function sanitizeGutenbergOuter(outer, blockName) {
+		if (!isExpectedGbRoot(outer, blockName)) return null;
+		sanitizeEditorHtml(outer);
+		sanitizeGbRootAttributes(outer);
+		return outer;
 	}
 
 	/* ================================================================== */
@@ -700,7 +793,9 @@
 			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
-			sanitizeEditorHtml(clone);
+			if (!sanitizeGutenbergOuter(clone, gb.blockName)) {
+				throw new Error("Unexpected Gutenberg root element.");
+			}
 			const newHtml = clone.outerHTML;
 
 			const newInnerContent = (gb.innerContent && gb.innerContent.length
@@ -729,7 +824,9 @@
 			if (!outer) throw new Error("innerHTML not parsable");
 			const clone = outer.cloneNode(false);
 			clone.innerHTML = htmlContent;
-			sanitizeEditorHtml(clone);
+			if (!sanitizeGutenbergOuter(clone, target.blockName)) {
+				throw new Error("Unexpected Gutenberg root element.");
+			}
 			const newOuterHtml = clone.outerHTML;
 
 			/* Preserve whitespace around the tag (e.g. "\n<p>…</p>\n") */
@@ -2092,14 +2189,15 @@
 		 * converting the outer container would otherwise destroy its structure.
 		 */
 		function isConvertibleGbParagraph(node) {
-			return !!(
-				node &&
-				node.type === "etch/passthrough" &&
-				node.gutenbergBlock &&
-				node.gutenbergBlock.blockName === "core/paragraph" &&
-				(!node.gutenbergBlock.innerBlocks || !node.gutenbergBlock.innerBlocks.length) &&
-				parseOuter(node.gutenbergBlock.innerHTML)
-			);
+			if (
+				!node ||
+				node.type !== "etch/passthrough" ||
+				!node.gutenbergBlock ||
+				node.gutenbergBlock.blockName !== "core/paragraph" ||
+				(node.gutenbergBlock.innerBlocks && node.gutenbergBlock.innerBlocks.length)
+			) return false;
+			const outer = parseOuter(node.gutenbergBlock.innerHTML);
+			return isExpectedGbRoot(outer, "core/paragraph");
 		}
 
 		function collectConvertibleGbParagraphs() {
@@ -2143,10 +2241,12 @@
 			if (!element) return attributes;
 			for (const attr of element.attributes) {
 				if (attr.name === "class") {
-					const cls = attr.value.split(/\s+/).filter((x) => x && !/^etch-/.test(x));
-					if (cls.length) attributes.class = cls.join(" ");
-				} else {
-					attributes[attr.name] = attr.value;
+					const cls = cleanClassValue(attr.value);
+					if (cls) attributes.class = cls;
+				} else if (attr.name === "id" && /^[A-Za-z][A-Za-z0-9_:.\-]*$/.test(attr.value)) {
+					attributes.id = attr.value;
+				} else if (attr.name === "style") {
+					attributes.style = attr.value;
 				}
 			}
 			return attributes;
@@ -2155,6 +2255,9 @@
 		function gbParagraphToEtchElement(block, templates) {
 			const outer = parseOuter(block.gutenbergBlock.innerHTML);
 			if (!outer) throw new Error("Gutenberg paragraph markup could not be parsed.");
+			if (!sanitizeGutenbergOuter(outer, "core/paragraph")) {
+				throw new Error("Unexpected Gutenberg paragraph root element.");
+			}
 			if (!templates || !templates.elTpl) {
 				throw new Error("No native Etch text element template is available.");
 			}
@@ -3178,6 +3281,10 @@
 			const applyLink = () => {
 				const url = linkInput.value.trim();
 				if (!url) return;
+				if (!isSafeHref(url)) {
+					setStatus("Please enter a safe URL (for example https://, mailto: or tel:).", "error");
+					return;
+				}
 				/* Editing an existing link: update href and optional attributes */
 				if (st.editingLink && st.editingLink.isConnected) {
 					st.editingLink.setAttribute("href", url);

@@ -2,6 +2,12 @@
 
 All notable changes to this project.
 
+## 1.1.0
+- Security: Gutenberg root elements are now validated and sanitized before Gutenberg content is saved.
+- Security: Gutenberg-to-Etch conversion now uses the same strict tag, attribute, style and URL checks as normal editing.
+- Security: unsafe link protocols such as `javascript:`, `data:` and `vbscript:` are rejected in the editor and on save.
+- Changed: standalone Gutenberg paragraphs with an unexpected root element are no longer offered for conversion.
+
 ## 1.0.22
 - Changed: the plugin accent color is now `#ED265A`, including the WordPress plugin icon, buttons, notices, badges, links and active states.
 

@@ -2,7 +2,7 @@
 
 Status note for picking the project back up (new session, new machine, or another developer).
 
-**Current version:** 1.0.22
+**Current version:** 1.1.0
 **Repo:** https://github.com/electricarts/etch-text-editor
 **Local working copy:** `~/Documents/DEV/etch-text-editor`
 **License:** GPL-2.0-or-later · **Author:** Mario Peischl
