@@ -3,7 +3,7 @@
  * Plugin Name:       Etch Text Editor
  * Plugin URI:        https://github.com/electricarts/etch-text-editor
  * Description:       Edit text blocks directly in the Etch builder – Gutenberg blocks (core/paragraph, core/heading, …) AND Etch text elements – including inline formatting (link, bold, italic, font-weight) and a canvas preview for Gutenberg content. Normal editing preserves Gutenberg blocks; standalone paragraphs can be manually converted to native Etch text elements.
- * Version:           1.1.0
+ * Version:           1.2.3
  * Author:            Mario Peischl
  * Author URI:        https://electricarts.de
  * Update URI:        https://electricarts.de/etch-text-editor/
@@ -15,7 +15,7 @@ if ( ! defined( 'ABSPATH' ) ) {
 	exit;
 }
 
-define( 'EPPE_VERSION', '1.1.0' );
+define( 'EPPE_VERSION', '1.2.3' );
 define( 'EPPE_TESTED_WP_VERSION', '7.1.3' );
 define( 'EPPE_PLUGIN_BASENAME', plugin_basename( __FILE__ ) );
 define( 'EPPE_GITHUB_REPOSITORY', 'electricarts/etch-text-editor' );
@@ -283,3 +283,32 @@ function eppe_enqueue() {
 }
 add_action( 'wp_enqueue_scripts', 'eppe_enqueue' );
 add_action( 'admin_enqueue_scripts', 'eppe_enqueue' );
+
+/**
+ * Add link controls to Etch anchor elements in the Gutenberg editor.
+ *
+ * This is separate from the Etch-builder script because Gutenberg does not
+ * expose the href stored on an etch/element anchor through Etch's default
+ * inspector. The editor script only runs for users who can edit content.
+ */
+function eppe_enqueue_block_editor_assets() {
+	if ( ! is_user_logged_in() || ! current_user_can( 'edit_posts' ) ) {
+		return;
+	}
+
+	wp_enqueue_script(
+		'etch-text-editor-gutenberg',
+		plugin_dir_url( __FILE__ ) . 'gutenberg-editor.js',
+		array(
+			'wp-block-editor',
+			'wp-components',
+			'wp-compose',
+			'wp-data',
+			'wp-element',
+			'wp-hooks',
+		),
+		EPPE_VERSION,
+		true
+	);
+}
+add_action( 'enqueue_block_editor_assets', 'eppe_enqueue_block_editor_assets' );
