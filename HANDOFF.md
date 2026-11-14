@@ -2,7 +2,7 @@
 
 Status note for picking the project back up (new session, new machine, or another developer).
 
-**Current version:** 1.1.0
+**Current version:** 1.2.3
 **Repo:** https://github.com/electricarts/etch-text-editor
 **Local working copy:** `~/Documents/DEV/etch-text-editor`
 **License:** GPL-2.0-or-later · **Author:** Mario Peischl
@@ -67,13 +67,15 @@ Selection is **polled** (`etch.blocks.getSelectedId()`), because the 0.x API has
 
 ---
 
-## 4. Feature set (as of 1.0.5)
+## 4. Feature set (as of 1.2.3)
 
 Formatting: bold, italic, strikethrough, superscript, subscript, font-weight (dropdown), text color (native picker **and** theme tokens via `var(--token)`), flat monochrome link/unlink icons, clear formatting, local undo/redo.
 
 Insert menu (¶): line break, soft hyphen (`&shy;`), non-breaking space (`&nbsp;`).
 
 Links: type a URL **or** search internal pages/posts/media via the WordPress REST API (`/wp/v2/search` + `/wp/v2/media`). Caret inside an existing link → opens prefilled for editing; title, target and `rel` are editable; unlink works from the caret too.
+
+In Gutenberg, selecting linked Etch text or its parent anchor element exposes a separate Link panel for editing the URL, title, target and `rel`. When text is selected, the extension updates the parent `etch/element` automatically. The existing block structure is preserved and unsafe URL protocols are rejected before saving.
 
 Behaviour: paste is always plain text; multiple inline styles on one selection merge into a single `<span>`; literal `<br>` values returned by Gutenberg are automatically normalized into real Etch line-break elements; popup is draggable (header) and resizable (bottom-right corner), opens next to the edited text; dropdowns show a caret and highlight while open and close on outside click; the selection stays visibly highlighted while a dropdown is open; toolbar buttons show explanatory hover/focus tooltips.
 
@@ -83,7 +85,7 @@ Saving: the Close button, click outside and Cmd/Ctrl+Enter save. The X, Discard 
 
 ## 5. Repo & release workflow
 
-Files in the repo: `etch-text-editor.php`, `editor.js`, `README.md`, `CHANGELOG.md`, `LICENSE`, `.gitignore`, `assets/popup.png` (README screenshot), `assets/icon-128x128.png` (WordPress plugin icon).
+Files in the repo: `etch-text-editor.php`, `editor.js`, `gutenberg-editor.js`, `README.md`, `CHANGELOG.md`, `LICENSE`, `.gitignore`, `assets/popup.png` (README screenshot), `assets/icon-128x128.png` (WordPress plugin icon).
 
 `.gitignore` excludes `*.zip` — release ZIPs are attached to GitHub Releases, not committed.
 

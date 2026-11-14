@@ -2,6 +2,19 @@
 
 All notable changes to this project.
 
+## 1.2.3
+- Fix: Render Gutenberg link controls in the supported default inspector group.
+
+## 1.2.2
+- Fix: Load the Gutenberg data store before registering the linked-text inspector controls.
+
+## 1.2.1
+- Fix: Selecting linked Etch text in Gutenberg now opens the link controls automatically; changes are applied to the parent anchor element.
+
+## 1.2.0
+- New: Linked Etch text and anchor elements now expose URL, title, target and `rel` controls in Gutenberg.
+- Security: Gutenberg link updates reject unsafe protocols and normalize link attributes before saving.
+
 ## 1.1.0
 - Security: Gutenberg root elements are now validated and sanitized before Gutenberg content is saved.
 - Security: Gutenberg-to-Etch conversion now uses the same strict tag, attribute, style and URL checks as normal editing.

@@ -24,6 +24,7 @@ Out of the box, Etch fully round-trips its own elements to Gutenberg, but text c
 - **Color via theme tokens**: pick ACSS / CSS custom-property color tokens (grouped by family) and apply them as `color: var(--token)`.
 - **Links**: type a URL or search internal pages, posts and media (WordPress REST API). Placing the caret inside an existing link opens it for editing with the current URL prefilled; removing a link works from the caret too.
 - **Extended link options**: edit link title, target and `rel`; links opening in a new tab automatically get `noopener`.
+- **Gutenberg link editing**: select a linked Etch text block or its parent anchor element in Gutenberg to edit the URL, title, target and `rel` without changing the Etch block structure.
 - **Insert menu (¶)**: line break, soft hyphen (`&shy;`) and non-breaking space (`&nbsp;`) at the caret.
 - **Paste as plain text**: pasted content from Word/Pages/websites is stripped of all formatting.
 - **Clean markup**: multiple inline styles on the same selection are merged into a single `<span>`; empty leftovers are removed; literal `<br>` values returned by Gutenberg are automatically converted into real line breaks.
@@ -64,6 +65,7 @@ The first installation is uploaded manually from the release ZIP. Once a version
 - **Saving**: click outside the popup, use the **Close** button or press `Cmd/Ctrl+Enter`. The X, **Discard** button and `Esc` ask before closing without saving.
 - When the text changed elsewhere while the popup was open, choose **Reload latest** or **Keep mine** before saving.
 - When a standalone Gutenberg paragraph is detected, choose **Convert to Etch** to turn that block into a native Etch text element, or **Keep as Gutenberg** to leave it unchanged.
+- In Gutenberg, select the linked word or its parent **Etch Element** block to open the **Link** panel in the block sidebar. The panel updates the parent link automatically; click **Apply** to save the link attributes.
 
 ## Known limitations
 
